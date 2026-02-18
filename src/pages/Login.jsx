@@ -28,31 +28,31 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-indigo-600 px-4">
-      <div className="bg-white/20 backdrop-blur-lg w-full max-w-md rounded-2xl shadow-2xl p-8 border border-white/30">
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold text-white mb-2">Welcome Back</h2>
-          <p className="text-white/80">Sign in to your account</p>
+    <div className="min-h-screen flex items-center justify-center bg-white px-4">
+      <div className="w-full max-w-md rounded-2xl p-8 border border-gray-100 shadow-lg bg-white/80 backdrop-blur-sm">
+        <div className="text-center mb-6">
+          <h2 className="text-3xl font-bold text-gray-800 mb-1">Welcome Back</h2>
+          <p className="text-gray-600">Sign in to your account</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-white font-medium mb-2">Email</label>
+            <label className="block text-gray-700 font-medium mb-2">Email</label>
             <input
               type="email"
               placeholder="Enter your email"
-              className="w-full border-0 bg-white/20 text-white placeholder-white/60 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/50 backdrop-blur-sm"
+              className="w-full border border-gray-200 bg-white text-gray-800 placeholder-gray-400 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200"
               onChange={(e) => setEmail(e.target.value)}
               required
             />
           </div>
 
           <div>
-            <label className="block text-white font-medium mb-2">Password</label>
+            <label className="block text-gray-700 font-medium mb-2">Password</label>
             <input
               type="password"
               placeholder="Enter your password"
-              className="w-full border-0 bg-white/20 text-white placeholder-white/60 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/50 backdrop-blur-sm"
+              className="w-full border border-gray-200 bg-white text-gray-800 placeholder-gray-400 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200"
               onChange={(e) => setPassword(e.target.value)}
               required
             />
@@ -61,7 +61,7 @@ export default function Login() {
           <button 
             type="submit"
             disabled={loading}
-            className="w-full bg-white/30 hover:bg-white/40 text-white font-semibold py-3 rounded-lg transition duration-300 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? (
               <div className="flex items-center justify-center space-x-2">
@@ -74,9 +74,9 @@ export default function Login() {
           </button>
         </form>
 
-        <p className="text-white/80 text-center mt-6">
+        <p className="text-gray-600 text-center mt-6">
           Don't have an account?{" "}
-          <Link to="/register" className="text-white font-semibold hover:text-yellow-300 transition duration-300">
+          <Link to="/register" className="text-blue-600 font-semibold hover:text-blue-800 transition duration-200">
             Sign Up
           </Link>
         </p>
