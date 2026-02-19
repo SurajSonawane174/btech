@@ -60,16 +60,22 @@ class DrawingReview:
 
     def extract_metadata(self, doc, filename):
 
-        meta = doc.metadata
+        name = Path(filename).stem  # remove .pdf
+        parts = name.split("_")
 
-        project = meta.get("title") or Path(filename).stem
+        project = parts[0] if len(parts) > 0 else "UNKNOWN"
+        drawing_number = parts[2] if len(parts) > 2 else "UNKNOWN"
+        revision = parts[3] if len(parts) > 3 else "R0"
 
         return {
             "project": project,
-            "praj_revision": "R0",
+            "drawing_number": drawing_number,
+            "praj_revision": revision,
             "customer_doc": "NA",
             "customer_revision": "NA"
         }
+
+
 
 
     # --------------------------
@@ -78,9 +84,12 @@ class DrawingReview:
 
     def get_uid(self, meta, page_num, rect, seq, page_height):
         row = int((rect[1] / page_height) * 80)
-        doc_name = meta.get("project", "DOC")
 
-        return f"{doc_name}-{page_num:03d}-{row:03d}-{seq:03d}"
+        project = meta.get("project", "DOC")
+        drawing = meta.get("drawing_number", "DWG")
+
+        return f"{project}-{drawing}-{page_num:03d}-{row:03d}-{seq:03d}"
+
 
 
 
@@ -128,8 +137,9 @@ class DrawingReview:
         page_height = page.rect.height
 
         # Expand significantly for engineering context
-        horizontal_expand = page_width * 0.25
-        vertical_expand = page_height * 0.25
+        horizontal_expand = (x1 - x0) * 1.5
+        vertical_expand = (y1 - y0) * 1.5
+
 
         crop = fitz.Rect(
             max(0, x0 - horizontal_expand),
@@ -142,7 +152,7 @@ class DrawingReview:
         output_path = img_dir / f"{uid}.png"
         pix.save(str(output_path))
 
-        return str(output_path)
+        return str(output_path).replace("\\", "/")
 
 
     # --------------------------
@@ -191,7 +201,7 @@ class DrawingReview:
                     # Extract Author + Date + Time
                     # -----------------------------
 
-                    author = annot.info.get("title", "Unknown")
+                    author = annot.info.get("title") or "Unknown"
 
                     creation_date = annot.info.get("creationDate", "")
                     date = "NA"
@@ -203,13 +213,22 @@ class DrawingReview:
 
                     color = "Unknown"
 
-                    if annot.colors and annot.colors.get("stroke"):
-                        rgb = annot.colors["stroke"]
+                    if annot.colors:
+                        stroke = annot.colors.get("stroke")
+                        fill = annot.colors.get("fill")
 
-                        if rgb[0] > 0.8 and rgb[1] < 0.2:
-                            color = "Red"
-                        elif rgb[2] > 0.8:
-                            color = "Blue"
+                        rgb = stroke or fill
+
+                        if rgb and isinstance(rgb, (list, tuple)) and len(rgb) >= 3:
+                            r, g, b = rgb[:3]
+
+                            if r > 0.8 and g < 0.3:
+                                color = "Red"
+                            elif b > 0.8 and r < 0.3:
+                                color = "Blue"
+                            elif r < 0.3 and g < 0.3 and b < 0.3:
+                                color = "Black"
+
 
                     # -----------------------------
                     # Client Comment Logic
@@ -258,27 +277,27 @@ class DrawingReview:
                     seq += 1
                     sr_no += 1
 
-                    if not text:
-                        continue
+                    # if not text:
+                    #     continue
 
-                    rect = annot.rect
-                    uid = self.get_uid(meta, page_num+1,
-                                       (rect.x0, rect.y0, rect.x1, rect.y1),
-                                       seq, page.rect.height)
+                    # rect = annot.rect
+                    # uid = self.get_uid(meta, page_num+1,
+                    #                    (rect.x0, rect.y0, rect.x1, rect.y1),
+                    #                    seq, page.rect.height)
 
-                    category = self.classify_comment(text)
-                    screenshot = self.capture_screenshot(
-                        page, rect, uid, job_dir)
+                    # category = self.classify_comment(text)
+                    # screenshot = self.capture_screenshot(
+                    #     page, rect, uid, job_dir)
 
-                    all_data.append({
-                        "uid": uid,
-                        "text": text,
-                        "category": category,
-                        "page": page_num+1,
-                        "screenshot": screenshot
-                    })
+                    # all_data.append({
+                    #     "uid": uid,
+                    #     "text": text,
+                    #     "category": category,
+                    #     "page": page_num+1,
+                    #     "screenshot": screenshot
+                    # })
 
-                    seq += 1
+                    # seq += 1
 
         # Save JSON
         with open(job_dir / "comments.json", "w") as f:
@@ -287,16 +306,10 @@ class DrawingReview:
         # Save CSV summary
         df = pd.DataFrame(all_data)
         if not df.empty:
-            df = pd.DataFrame(all_data)
-            df.to_csv(job_dir / "final_output.csv", index=False)    
-
-        df = pd.DataFrame(all_data)
-
-        if not df.empty:
             df.to_csv(job_dir / "final_output.csv", index=False)
 
 
-        logger.info(f"Processed {pdf_path.name} with {len(all_data)} comments")
+        logger.info(f"Processed {pdf_path.stem} with {len(all_data)} comments")
 
         return len(all_data)
 
@@ -319,7 +332,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True,
                         help="PDF file or folder")
-    parser.add_argument("--config", default="config.yaml")
+    BASE_DIR = Path(__file__).resolve().parent
+    DEFAULT_CONFIG = BASE_DIR / "config.yaml"
+
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+
     args = parser.parse_args()
 
     # Load YAML config
