@@ -8,7 +8,7 @@ __pycache__/
 
 # Output folders
 output/
-ai-engine/output/
+praj/ai-engine/output/
 
 # Environment variables
 .env
@@ -16,6 +16,6 @@ ai-engine/output/
 # VS Code
 .vscode/
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
