@@ -1,5 +1,5 @@
 require("dotenv").config();
-const pool = require("./pool");
+const pool = require("./db");
 
 async function testDB() {
   try {
@@ -32,4 +32,5 @@ async function testDB() {
   }
 }
 
-testDB();
+// testDB();
+module.exports = testDB;

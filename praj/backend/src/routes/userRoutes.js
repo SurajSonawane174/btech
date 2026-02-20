@@ -2,28 +2,25 @@ const express = require("express");
 const router = express.Router();
 const passport = require("passport");
 const user = require("../controllers/userController");
+const {isLoggedIn}  = require("../middleware/auth")
 
-// Register route
-router.route("/register")
-    .post(user.register);   // POST /api/users/register
+// Register
+router.post("/register", user.register);
 
-// Login route
-router.route("/login")
-    .post(passport.authenticate("local", {
+// Login
+router.post(
+    "/login",
+    passport.authenticate("local", {
         failureMessage: true,
-    }), user.login);  
+    }),
+    user.login
+);
 
-// Logout route
-router.route("/logout")
-    .get(user.logout);  
+// Logout (protected)
+router.get("/logout", isLoggedIn, user.logout);
 
-// Protected profile route
-router.route("/profile")
-    .get((req, res) => {
-        if (!req.isAuthenticated()) {
-            return res.status(401).json({ error: "You must be signed in first!" });
-        }
-        res.json({ user: req.user });
-    });
+// Profile (protected)
+router.get("/profile", isLoggedIn, user.getProfile);
+
 
 module.exports = router;

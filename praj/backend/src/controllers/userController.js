@@ -1,95 +1,75 @@
-const bcrypt = require('bcrypt');
-const User = require('../models/userModel'); 
 const passport = require('passport');
+const pool = require('../../db/db');
+const bcrypt = require('bcrypt');
 
-// 1. REGISTER USER
-module.exports.register = async (req, res, next) => {
+
+module.exports.register = async (req, res) => {
     try {
-        const { email, password, fullName } = req.body;
+        const { username, email, password, role } = req.body;
 
-        // Validation
-        if (!email || !password || !fullName) {
-            return res.status(400).json({ message: 'All fields are required' });
+        const existing = await pool.query(
+            'SELECT * FROM get_user_by_email($1)',
+            [email]
+        );
+
+        if (existing.rows.length > 0) {
+            return res.status(400).json({ message: 'User exists' });
         }
-        const existingUser = await User.findOne({ where: { email: email } });
-        if (existingUser) {
-            return res.status(400).json({ message: 'User already exists' });
-        }
 
-        const newUser = await User.create({
-            email,
-            password,
-            fullName
-        });
+        const hashedPassword = await bcrypt.hash(password, 10);
 
-        req.login(newUser, err => {
-            if (err) return next(err);
-            
-            const userResponse = newUser.toJSON();
-            delete userResponse.password;
+        await pool.query(
+            'SELECT create_user($1, $2, $3, $4)',
+            [username, email, hashedPassword, role]
+        );
 
-            res.status(201).json({ message: 'Welcome!', user: userResponse });
-        });
-    
+        res.status(201).json({ message: 'User registered' });
+
     } catch (err) {
-        console.error(err);
         res.status(500).json({ message: 'Server error' });
     }
 };
 
-// 2. LOGIN USER
-module.exports.login = (req, res) => {
-    res.json({ message: 'Welcome back!', user: req.user });
+
+// LOGIN 
+module.exports.login = (req, res, next) => {
+    passport.authenticate('local', (err, user, info) => {
+        if (err) return next(err);
+
+        if (!user) {
+            return res.status(400).json({ message: info.message });
+        }
+
+        req.login(user, (err) => {
+            if (err) return next(err);
+
+            return res.json({
+                message: 'Login successful',
+                user
+            });
+        });
+    })(req, res, next);
 };
 
-// 3. LOGOUT USER
+
+// LOGOUT
 module.exports.logout = (req, res, next) => {
-    req.logout((err) => {
+    req.logout(function (err) {
         if (err) return next(err);
-        res.json({ message: 'Goodbye!' });
+
+        req.session.destroy(() => {
+            res.clearCookie('connect.sid');
+            res.json({ message: 'Logged out successfully' });
+        });
     });
 };
 
-// 4. GET PROFILE
-module.exports.getProfile = async (req, res) => {
-    try {
-        const user = await User.findByPk(req.user.id, {
-            attributes: ['id', 'email', 'fullName', 'monthlyBudget', 'currency']
-        });
 
-        if (!user) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        res.json(user);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Could not fetch profile' });
+// GET PROFILE 
+module.exports.getProfile = (req, res) => {
+    if (!req.isAuthenticated()) {
+        return res.status(401).json({ message: 'Unauthorized' });
     }
-};
 
-// 5. UPDATE PROFILE
-module.exports.updateProfile = async (req, res) => {
-    try {
-        const { fullName, monthlyBudget, currency } = req.body;
-
-        const [updatedRows] = await User.update(
-            { 
-
-            },
-            { 
-                where: { id: req.user.id } 
-            }
-        );
-
-        if (updatedRows === 0) {
-            return res.status(400).json({ message: 'No changes made or user not found' });
-        }
-
-        res.json({ message: 'Profile updated successfully' });
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Could not update profile' });
-    }
+    res.json(req.user);
 };
