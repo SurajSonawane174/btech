@@ -28,7 +28,7 @@ app.use(express.urlencoded({ extended: true }));
    CORS (IMPORTANT FOR REACT FRONTEND)
 ========================================= */
 app.use(cors({
-  origin: "http://localhost:3000", // React frontend
+  origin: true, // React frontend
   credentials: true               // Allow cookies/session
 }));
 
@@ -102,7 +102,7 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-/* =========================================
+/*  =========================================
    ROUTES
 ========================================= */
 app.use("/api/users", userRoutes);
