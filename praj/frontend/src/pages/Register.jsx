@@ -36,8 +36,10 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white px-4">
-      <div className="w-full max-w-md rounded-2xl p-8 border border-gray-100 shadow-lg bg-white/80 backdrop-blur-sm">
+    // Added a background gradient to make the glass effect pop
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-100 via-white to-purple-100 px-4">
+      {/* The Glassy Container */}
+      <div className="w-full max-w-md rounded-3xl p-8 border border-white/60 shadow-[0_8px_30px_rgb(0,0,0,0.08)] bg-white/40 backdrop-blur-md">
         <div className="text-center mb-6">
           <h2 className="text-3xl font-bold text-gray-800 mb-1">Create Account</h2>
           <p className="text-gray-600">Join us today</p>
@@ -49,7 +51,7 @@ export default function Register() {
             <input
               name="name"
               placeholder="Enter your full name"
-              className="w-full border border-gray-200 bg-white text-gray-800 placeholder-gray-400 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="w-full border border-white/50 bg-white/50 text-gray-800 placeholder-gray-500 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 focus:bg-white/80 transition-all"
               onChange={handleChange}
               required
             />
@@ -61,7 +63,7 @@ export default function Register() {
               name="email"
               type="email"
               placeholder="Enter your email"
-              className="w-full border border-gray-200 bg-white text-gray-800 placeholder-gray-400 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="w-full border border-white/50 bg-white/50 text-gray-800 placeholder-gray-500 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 focus:bg-white/80 transition-all"
               onChange={handleChange}
               required
             />
@@ -73,7 +75,7 @@ export default function Register() {
               name="password"
               type="password"
               placeholder="Create a password"
-              className="w-full border border-gray-200 bg-white text-gray-800 placeholder-gray-400 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="w-full border border-white/50 bg-white/50 text-gray-800 placeholder-gray-500 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 focus:bg-white/80 transition-all"
               onChange={handleChange}
               required
             />
@@ -83,7 +85,7 @@ export default function Register() {
             <label className="block text-gray-700 font-medium mb-2">Role</label>
             <select
               name="role"
-              className="w-full border border-gray-200 bg-white text-gray-800 p-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="w-full border border-white/50 bg-white/50 text-gray-800 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300 focus:bg-white/80 transition-all"
               onChange={handleChange}
             >
               <option value="user">User</option>
@@ -94,7 +96,7 @@ export default function Register() {
           <button 
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg transition duration-200 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-blue-600/90 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition duration-200 shadow-lg backdrop-blur-sm disabled:opacity-50 disabled:cursor-not-allowed mt-2"
           >
             {loading ? (
               <div className="flex items-center justify-center space-x-2">
@@ -109,7 +111,7 @@ export default function Register() {
 
         <p className="text-gray-600 text-center mt-6">
           Already have an account?{" "}
-          <Link to="/login" className="text-blue-600 font-semibold hover:text-blue-800 transition duration-200">
+          <Link to="/login" className="text-blue-700 font-semibold hover:text-blue-900 transition duration-200">
             Sign In
           </Link>
         </p>

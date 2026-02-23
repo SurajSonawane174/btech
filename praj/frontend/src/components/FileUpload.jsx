@@ -92,103 +92,96 @@ export default function FileUpload() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-8">
-      <div className="bg-white w-full max-w-2xl rounded-lg shadow-lg p-8 space-y-6 border border-gray-200">
-
-        <h2 className="text-3xl font-bold text-center text-gray-800 mb-8">
-          PDF Document Scanner
+    <div className="bg-white w-full rounded-2xl shadow-xl p-10 space-y-8 border border-slate-100">
+      <div className="text-center">
+        <h2 className="text-3xl font-extrabold text-slate-900 mb-2">
+          Upload Documents
         </h2>
-
-        {/* File Input with Drag and Drop */}
-        <div 
-          className={`border-2 border-dashed rounded-lg p-8 text-center transition-all duration-300 cursor-pointer ${
-            dragOver 
-              ? 'border-blue-500 bg-blue-50' 
-              : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
-          }`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current.click()}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="application/pdf"
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-          <div className="text-5xl mb-4 text-gray-400">📄</div>
-          <p className="text-lg text-gray-700 font-medium mb-2">
-            Drag & drop PDF files here or click to browse
-          </p>
-          <p className="text-sm text-gray-500">
-            Only PDF files are supported
-          </p>
-        </div>
-
-        {/* File List */}
-        {files.length > 0 && (
-          <div className="space-y-2">
-            <h3 className="text-lg font-semibold text-gray-700">Selected Files:</h3>
-            {files.map((file, index) => (
-              <div key={index} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border">
-                <span className="text-sm text-gray-600">{file.name}</span>
-                <button 
-                  onClick={() => removeFile(index)}
-                  className="text-red-500 hover:text-red-700 font-bold text-lg"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Buttons */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <button
-            onClick={uploadFiles}
-            disabled={loading || !files.length}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition duration-300 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Upload
-          </button>
-
-          <button
-            onClick={scanFiles}
-            disabled={loading}
-            className="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-lg transition duration-300 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Scan
-          </button>
-
-          <button
-            onClick={exportExcel}
-            disabled={loading}
-            className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-4 rounded-lg transition duration-300 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Excel
-          </button>
-
-          <button
-            onClick={exportJSON}
-            disabled={loading}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-lg transition duration-300 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            JSON
-          </button>
-        </div>
-
-        {loading && (
-          <div className="text-center text-gray-500 flex items-center justify-center space-x-2">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-            <span>Processing...</span>
-          </div>
-        )}
-
+        <p className="text-slate-500">Drag and drop your PDFs below to begin the comment extraction process.</p>
       </div>
+
+      <div 
+        className={`border-2 border-dashed rounded-2xl p-10 text-center transition-all duration-300 cursor-pointer ${
+          dragOver 
+            ? 'border-indigo-500 bg-indigo-50' 
+            : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'
+        }`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current.click()}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="application/pdf"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+        <div className="text-6xl mb-4 text-slate-300">📄</div>
+        <p className="text-lg text-slate-700 font-bold mb-1">
+          Drop your PDFs here
+        </p>
+        <p className="text-sm text-slate-400 font-medium">
+          or click to browse your files
+        </p>
+      </div>
+
+      {files.length > 0 && (
+        <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-3">
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Queue ({files.length})</h3>
+          {files.map((file, index) => (
+            <div key={index} className="flex items-center justify-between bg-white p-3 rounded-lg shadow-sm border border-slate-100">
+              <span className="text-sm font-medium text-slate-700 truncate mr-4">{file.name}</span>
+              <button 
+                onClick={() => removeFile(index)}
+                className="text-slate-400 hover:text-rose-500 font-bold text-xl transition-colors"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4 border-t border-slate-100">
+        <button
+          onClick={uploadFiles}
+          disabled={loading || !files.length}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-md hover:shadow-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Upload
+        </button>
+        <button
+          onClick={scanFiles}
+          disabled={loading}
+          className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-md hover:shadow-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Scan
+        </button>
+        <button
+          onClick={exportExcel}
+          disabled={loading}
+          className="bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Excel
+        </button>
+        <button
+          onClick={exportJSON}
+          disabled={loading}
+          className="bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-3 px-4 rounded-xl transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          JSON
+        </button>
+      </div>
+
+      {loading && (
+        <div className="text-center text-slate-500 font-medium flex items-center justify-center space-x-3 mt-4">
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-indigo-600"></div>
+          <span>Processing your documents...</span>
+        </div>
+      )}
     </div>
   );
 }
