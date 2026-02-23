@@ -1,9 +1,9 @@
 CREATE TABLE documents (
     id BIGSERIAL PRIMARY KEY,
 
-    praj_doc_number VARCHAR(100) NOT NULL,
-    praj_revision VARCHAR(50),
-    customer_doc_number VARCHAR(100),
+    praj_document_number VARCHAR(100) NOT NULL,
+    praj_revision_number VARCHAR(50),
+    customer_document_number VARCHAR(100),
     customer_revision VARCHAR(50),
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -22,41 +22,34 @@ CREATE TABLE users (
 );
 
 CREATE TABLE comments (
-    id BIGSERIAL PRIMARY KEY,
+  id BIGSERIAL NOT NULL,
 
-    document_id BIGINT NOT NULL
-        REFERENCES documents(id)
-        ON DELETE CASCADE,
+  document_id BIGINT NOT NULL,
 
-    comment_id_external VARCHAR(100) NOT NULL,
-    page_sheet VARCHAR(50),
+  comment_id VARCHAR(100) NOT NULL,
+  page_sheet VARCHAR(50),
 
-    actual_comment TEXT NOT NULL,
-    snapshot_file VARCHAR(255),
+  actual_extracted_comment TEXT NOT NULL,
+  snapshot_file VARCHAR(255),
 
-    commenter_name VARCHAR(150),
-    comment_datetime TIMESTAMP,
+  name_of_person_commented VARCHAR(150),
+  comment_datetime TIMESTAMP,
 
-    comment_color VARCHAR(50),
+  comment_color VARCHAR(50),
 
-    is_client_comment BOOLEAN NOT NULL DEFAULT FALSE,
-    comment_category VARCHAR(100),
-    is_handwritten BOOLEAN NOT NULL DEFAULT FALSE,
+  is_client_comment BOOLEAN NOT NULL DEFAULT FALSE,
+  comment_category VARCHAR(100),
+  is_handwritten BOOLEAN NOT NULL DEFAULT FALSE,
 
-    extraction_confidence DECIMAL(5,2),
+  extraction_confidence_percent NUMERIC(5, 2),
 
-    assigned_to_user_id BIGINT
-        REFERENCES users(id)
-        ON DELETE SET NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    target_closure_date DATE,
-    crs_reference VARCHAR(100),
+  CONSTRAINT comments_pkey PRIMARY KEY (id),
 
-    resolution_summary TEXT,
-
-    status VARCHAR(50) NOT NULL DEFAULT 'Open',
-
-    evidence_link VARCHAR(255),
-
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  CONSTRAINT comments_document_id_fkey
+    FOREIGN KEY (document_id)
+    REFERENCES documents (id)
+    ON DELETE CASCADE
 );
+
