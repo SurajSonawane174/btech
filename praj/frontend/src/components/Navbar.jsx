@@ -1,44 +1,43 @@
-import { useAuth } from "../auth/AuthContext";
+import React from 'react';
+import { Search, Moon, Bell, Upload, Menu } from 'lucide-react';
 
 export default function Navbar({ toggleSidebar }) {
-  const { user } = useAuth();
-
   return (
-    <header className="bg-white h-20 flex items-center justify-between px-6 shadow-sm border-b border-slate-200 z-10">
-      <div className="flex items-center gap-6 flex-1">
-        {/* Hamburger Toggle Button */}
+    <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 flex-shrink-0">
+      <div className="flex items-center gap-4">
         <button 
           onClick={toggleSidebar}
-          className="text-slate-500 hover:text-indigo-600 transition-colors p-2 rounded-lg hover:bg-slate-50"
-          aria-label="Toggle Sidebar"
+          className="p-2 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
         >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
+          <Menu size={20} />
         </button>
-
-        {/* Search Bar matching your image */}
-        <div className="max-w-md w-full relative hidden md:block">
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <span className="text-slate-400">🔍</span>
-          </div>
-          <input 
-            type="text" 
-            placeholder="Search documents or comments..." 
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
-          />
+        
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">Dashboard</h2>
+          {/* <p className="text-sm text-slate-500">Wed, 25 Feb 2026 — Welcome back, N. Admin</p> */}
         </div>
       </div>
-
-      {/* User Profile Section */}
+      
       <div className="flex items-center gap-4">
-        <div className="text-right hidden sm:block">
-          <p className="text-sm font-bold text-slate-700">{user?.name || user?.email || "Analyst"}</p>
-          <p className="text-xs text-slate-500">System Admin</p>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <input 
+            type="text" 
+            placeholder="Search drawings, comments..." 
+            className="pl-10 pr-4 py-2 bg-slate-100 border-transparent rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64 transition-all"
+          />
         </div>
-        <div className="h-10 w-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold shadow-md">
-          {user?.name?.charAt(0).toUpperCase() || "A"}
-        </div>
+        
+        <button className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-colors"><Moon size={20} /></button>
+        <button className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-colors relative">
+          <Bell size={20} />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+        </button>
+        
+        {/* Replaced your old React Router Link with the new design's button */}
+        <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm">
+          <Upload size={16} /> Upload Drawing
+        </button>
       </div>
     </header>
   );

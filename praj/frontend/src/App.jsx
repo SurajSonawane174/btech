@@ -1,12 +1,20 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import PrivateRoute from "./auth/PrivateRoute";
+
+// --- PAGES ---
 import Register from "./pages/Register";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import UploadPage from "./pages/UploadPage";
 import NotAuthorized from "./pages/NotAuthorized";
 import Comments from "./pages/Comments";
+import GetCrs from "./pages/CRSLookup";
+import Reports from "./pages/Reports"; 
+
+// --- ADD THESE TWO NEW IMPORTS ---
+import Notifications from "./pages/Notifications";
+import CRSReview from "./pages/CRSReview";
 
 export default function App() {
   return (
@@ -33,19 +41,53 @@ export default function App() {
           <Route
             path="/upload"
             element={
-              // Added "user" here to prevent the blank screen if you aren't an admin
               <PrivateRoute roles={["admin", "user"]}>
                 <UploadPage />
               </PrivateRoute>
             }
           />
 
-          {/* Placeholder for your Comments page to prevent crashes */}
           <Route
             path="/comments"
             element={
               <PrivateRoute roles={["admin"]}>
                 <Comments />
+              </PrivateRoute>
+            }
+          />
+
+          <Route
+            path="/get-crs"
+            element={
+              <PrivateRoute roles={["admin", "user"]}>
+                <GetCrs />
+              </PrivateRoute>
+            }
+          />
+          
+          <Route 
+            path="/notifications" 
+            element={
+              <PrivateRoute roles={["admin", "user"]}>
+                <Notifications />
+              </PrivateRoute>
+            } 
+          />
+          
+          <Route 
+            path="/review" 
+            element={
+              <PrivateRoute roles={["admin", "user"]}>
+                <CRSReview />
+              </PrivateRoute>
+            } 
+          />
+
+          <Route
+            path="/reports"
+            element={
+              <PrivateRoute roles={["admin", "user"]}>
+                <Reports />
               </PrivateRoute>
             }
           />
