@@ -46,7 +46,7 @@ export default function CRSReview() {
         {/* Metadata Banner */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 grid grid-cols-6 gap-4">
           {[
-            { label: 'DOC NO', val: 'chait-001' },
+            { label: 'DOC NO', val: 'praj-001' },
             { label: 'REVISION', val: 'A' },
             { label: 'CUST DOC NO', val: 'CUST-001' },
             { label: 'CUST REVISION', val: '1' },

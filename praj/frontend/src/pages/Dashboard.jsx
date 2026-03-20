@@ -1,8 +1,27 @@
-import React from 'react';
-import Layout from '../components/Layout'; // Adjust path if necessary
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import Layout from '../components/Layout';
 import { AlertTriangle, ChevronRight, Folder, MessageCircle, Hourglass, ShieldAlert, FileText } from 'lucide-react';
 
+const ALL_DRAWINGS = [
+  { id: "praj-001", sup: "ABC Engineering", po: "PO-7788", com: "250", status: "Open" },
+  { id: "U-002", sup: "ABC Engineering", po: "PO-7788", com: "150", status: "In Progress" },
+  { id: "U-003", sup: "ABC Engineering", po: "PO-7788", com: "300", status: "Open" },
+  { id: "U-004", sup: "ABC Engineering", po: "PO-7788", com: "200", status: "Closed" },
+  { id: "ENGR-007", sup: "Delta Systems", po: "PO-5521", com: "88", status: "Open" },
+  { id: "ENGR-008", sup: "Delta Systems", po: "PO-5521", com: "42", status: "Closed" },
+];
+
+const TABS = ['All', 'Open', 'In Progress', 'Closed'];
+
 export default function Dashboard() {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState('All');
+
+  const filteredDrawings = activeTab === 'All'
+    ? ALL_DRAWINGS
+    : ALL_DRAWINGS.filter(d => d.status === activeTab);
+
   return (
     <Layout>
       <div className="p-8 max-w-7xl mx-auto space-y-6">
@@ -11,9 +30,9 @@ export default function Dashboard() {
         <div className="bg-red-50 border border-red-100 rounded-lg p-3 flex items-center justify-between text-red-700">
           <div className="flex items-center gap-2 text-sm">
             <AlertTriangle size={18} className="text-red-500" />
-            <span className="font-semibold text-red-600">3 overdue</span> CRS items — target dates have passed and need immediate resolution.
+            <span className="font-semibold text-red-600">5 overdue</span> CRS items — target dates have passed and need immediate resolution.
           </div>
-          <button className="text-sm font-medium text-red-600 hover:text-red-800 flex items-center gap-1">
+          <button onClick={() => navigate('/notifications')} className="text-sm font-medium text-red-600 hover:text-red-800 flex items-center gap-1">
             View Overdue <ChevronRight size={16} />
           </button>
         </div>
@@ -39,7 +58,7 @@ export default function Dashboard() {
         </div>
 
         {/* Main Content Grid (Table + Charts) */}
-        <div className="grid grid-cols-3 gap-6 ">
+        <div className="grid grid-cols-3 gap-6">
           
           {/* Left Column (Table) */}
           <div className="col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -47,17 +66,31 @@ export default function Dashboard() {
               <div className="flex items-center gap-3">
                 <FileText size={18} className="text-slate-400" />
                 <h3 className="font-semibold text-slate-800">Recent Drawings</h3>
-                <span className="bg-indigo-50 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full font-semibold">7 shown</span>
+                <span className="bg-indigo-50 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full font-semibold">{filteredDrawings.length} shown</span>
               </div>
-              <button className="text-xs text-indigo-600 font-medium hover:text-indigo-800">View All →</button>
+              <button
+                onClick={() => navigate('/comments')}
+                className="text-xs text-indigo-600 font-medium hover:text-indigo-800"
+              >
+                View All →
+              </button>
             </div>
             
             {/* Tabs */}
             <div className="px-5 border-b border-slate-100 flex gap-6 text-sm">
-              <button className="py-3 text-indigo-600 border-b-2 border-indigo-600 font-medium">All</button>
-              <button className="py-3 text-slate-500 hover:text-slate-800">Open</button>
-              <button className="py-3 text-slate-500 hover:text-slate-800">In Progress</button>
-              <button className="py-3 text-slate-500 hover:text-slate-800">Closed</button>
+              {TABS.map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`py-3 transition-colors ${
+                    activeTab === tab
+                      ? 'text-indigo-600 border-b-2 border-indigo-600 font-medium'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
             </div>
 
             {/* Table */}
@@ -72,14 +105,11 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="text-sm">
-                {[
-                  { id: "chait-001", sup: "ABC Engineering", po: "PO-7788", com: "250", status: "Open" },
-                  { id: "U-002", sup: "ABC Engineering", po: "PO-7788", com: "150", status: "In Progress" },
-                  { id: "U-003", sup: "ABC Engineering", po: "PO-7788", com: "300", status: "Open" },
-                  { id: "U-004", sup: "ABC Engineering", po: "PO-7788", com: "200", status: "Closed" },
-                  { id: "ENGR-007", sup: "Delta Systems", po: "PO-5521", com: "88", status: "Open" },
-                  { id: "ENGR-008", sup: "Delta Systems", po: "PO-5521", com: "42", status: "Closed" },
-                ].map((row, i) => (
+                {filteredDrawings.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="p-6 text-center text-slate-400 text-xs">No drawings found for this status.</td>
+                  </tr>
+                ) : filteredDrawings.map((row, i) => (
                   <tr key={i} className="border-b border-slate-50 hover:bg-slate-50">
                     <td className="p-4 text-indigo-600 font-medium">{row.id}</td>
                     <td className="p-4 text-slate-600">{row.sup}</td>
@@ -92,8 +122,8 @@ export default function Dashboard() {
                         'bg-emerald-50 text-emerald-600 border-emerald-100'
                       }`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${
-                           row.status === 'Open' ? 'bg-red-500' :
-                           row.status === 'In Progress' ? 'bg-amber-500' : 'bg-emerald-500'
+                          row.status === 'Open' ? 'bg-red-500' :
+                          row.status === 'In Progress' ? 'bg-amber-500' : 'bg-emerald-500'
                         }`}></span>
                         {row.status}
                       </span>
@@ -113,10 +143,10 @@ export default function Dashboard() {
               </h3>
               <div className="flex items-center justify-center gap-6">
                 <div className="relative w-32 h-32 rounded-full border-[12px] border-emerald-500 border-l-red-500 border-b-amber-500 flex items-center justify-center">
-                   <div className="text-center">
-                     <span className="block text-xl font-bold text-slate-800">6,540</span>
-                     <span className="block text-[10px] text-slate-400">Total</span>
-                   </div>
+                  <div className="text-center">
+                    <span className="block text-xl font-bold text-slate-800">6,540</span>
+                    <span className="block text-[10px] text-slate-400">Total</span>
+                  </div>
                 </div>
                 <div className="space-y-3 text-xs">
                   <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500"></span><span className="text-slate-600">Closed</span><span className="font-semibold text-slate-800 ml-auto">3,597</span></div>

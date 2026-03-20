@@ -2,80 +2,64 @@ import React, { useState, useRef } from 'react';
 import api from '../api/axios';
 import { UploadCloud, FileText, Settings, X, Loader2 } from 'lucide-react';
 
-export default function FileUpload({ loading, setLoading }) {
-  const [files, setFiles] = useState([]);
+export default function FileUpload({ loading, setLoading, onProcess, onReset }) {
+  const [files, setFiles]       = useState([]);
   const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef(null);
+  const fileInputRef            = useRef(null);
 
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setDragOver(true);
-  };
-
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-  };
+  const handleDragOver  = (e) => { e.preventDefault(); setDragOver(true);  };
+  const handleDragLeave = (e) => { e.preventDefault(); setDragOver(false); };
 
   const handleDrop = (e) => {
     e.preventDefault();
     setDragOver(false);
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(
-      file => file.type === 'application/pdf' || file.type.startsWith('image/')
+    const dropped = Array.from(e.dataTransfer.files).filter(
+      f => f.type === 'application/pdf' || f.type.startsWith('image/')
     );
-    setFiles([...files, ...droppedFiles]);
+    setFiles(prev => [...prev, ...dropped]);
   };
 
   const handleFileSelect = (e) => {
-    const selectedFiles = Array.from(e.target.files);
-    setFiles([...files, ...selectedFiles]);
+    setFiles(prev => [...prev, ...Array.from(e.target.files)]);
   };
 
   const removeFile = (index) => {
-    setFiles(files.filter((_, i) => i !== index));
+    setFiles(prev => prev.filter((_, i) => i !== index));
+    onReset?.();
   };
 
   const handleProcessDrawing = async () => {
     if (!files.length) return alert("Please select a file to process first.");
 
     try {
-      setLoading(true);
+      // Kick off the step animation in the parent
+      onProcess?.();
 
-      // 1. Upload the files
       const formData = new FormData();
-      for (let file of files) { 
-        formData.append("files", file);
-      }
+      for (let file of files) formData.append("files", file);
       await api.post("/upload", formData);
-
-      // 2. Trigger the scan process
       await api.post("/scan");
-      
-      alert("Drawing processed and scanned successfully!");
-      // Optional: Clear files after success
-      // setFiles([]);
-      
+
     } catch (err) {
       console.error(err);
       alert("Processing failed. Please check the network tab or server logs.");
-    } finally {
       setLoading(false);
     }
   };
 
   return (
     <div className="col-span-2 space-y-6">
-      
+
       {/* Upload Box */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="bg-slate-50 p-4 border-b border-slate-100 flex items-center gap-2 font-bold text-slate-700">
           <UploadCloud size={18} className="text-indigo-500" /> Upload Drawing
         </div>
         <div className="p-6">
-          <div 
+          <div
             className={`border-2 border-dashed rounded-xl p-10 text-center flex flex-col items-center justify-center transition-all cursor-pointer min-h-[200px] ${
-              dragOver 
-                ? 'border-indigo-500 bg-indigo-50' 
+              dragOver
+                ? 'border-indigo-500 bg-indigo-50'
                 : 'border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-purple-50/30 hover:bg-indigo-50/80'
             }`}
             onDragOver={handleDragOver}
@@ -94,23 +78,27 @@ export default function FileUpload({ loading, setLoading }) {
 
             {files.length > 0 ? (
               <div className="w-full text-left space-y-3">
-                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Selected Files ({files.length})</h3>
+                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  Selected Files ({files.length})
+                </h3>
                 {files.map((file, index) => (
-                  <div 
-                    key={index} 
+                  <div
+                    key={index}
                     className="flex items-center justify-between bg-white p-3 rounded-lg shadow-sm border border-slate-100"
-                    onClick={(e) => e.stopPropagation()} 
+                    onClick={e => e.stopPropagation()}
                   >
                     <span className="text-sm font-medium text-slate-700 truncate mr-4">{file.name}</span>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); removeFile(index); }}
+                    <button
+                      onClick={e => { e.stopPropagation(); removeFile(index); }}
                       className="text-slate-400 hover:text-rose-500 transition-colors"
                     >
                       <X size={18} />
                     </button>
                   </div>
                 ))}
-                <p className="text-xs text-center text-slate-400 mt-4 font-medium">Click or drag more files to add</p>
+                <p className="text-xs text-center text-slate-400 mt-4 font-medium">
+                  Click or drag more files to add
+                </p>
               </div>
             ) : (
               <>
@@ -130,17 +118,21 @@ export default function FileUpload({ loading, setLoading }) {
         </div>
         <div className="p-6 grid grid-cols-2 gap-5">
           {[
-            { label: "DOC NUMBER", val: "chait-001" },
-            { label: "REVISION", val: "A" },
-            { label: "CUSTOMER DOC NO", val: "CUST-001" },
-            { label: "CUSTOMER REVISION", val: "1" },
-            { label: "SUPPLIER NAME", val: "ABC Engineering" },
-            { label: "SUPPLIER PO", val: "PO-7788" },
-            { label: "PAGE / SHEET", val: "1" }
+            { label: "DOC NUMBER",       val: "chait-001"       },
+            { label: "REVISION",         val: "A"               },
+            { label: "CUSTOMER DOC NO",  val: "CUST-001"        },
+            { label: "CUSTOMER REVISION",val: "1"               },
+            { label: "SUPPLIER NAME",    val: "ABC Engineering" },
+            { label: "SUPPLIER PO",      val: "PO-7788"         },
+            { label: "PAGE / SHEET",     val: "1"               },
           ].map((field, i) => (
             <div key={i}>
               <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">{field.label}</label>
-              <input type="text" defaultValue={field.val} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+              <input
+                type="text"
+                defaultValue={field.val}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+              />
             </div>
           ))}
           <div>
@@ -155,7 +147,7 @@ export default function FileUpload({ loading, setLoading }) {
       </div>
 
       {/* Action Button */}
-      <button 
+      <button
         onClick={handleProcessDrawing}
         disabled={loading || !files.length}
         className="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-200 flex justify-center items-center gap-2 transition-all"
@@ -166,7 +158,6 @@ export default function FileUpload({ loading, setLoading }) {
           <><Settings size={20} /> Process Drawing</>
         )}
       </button>
-
     </div>
   );
 }

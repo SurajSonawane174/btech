@@ -11,10 +11,9 @@ import NotAuthorized from "./pages/NotAuthorized";
 import Comments from "./pages/Comments";
 import GetCrs from "./pages/CRSLookup";
 import Reports from "./pages/Reports"; 
-
-// --- ADD THESE TWO NEW IMPORTS ---
 import Notifications from "./pages/Notifications";
 import CRSReview from "./pages/CRSReview";
+import Settings from "./pages/Settings";
 
 export default function App() {
   return (
@@ -55,7 +54,7 @@ export default function App() {
               </PrivateRoute>
             }
           />
-
+          <Route path="/crs-review/:drawingNo" element={<PrivateRoute roles={["admin", "user"]}><CRSReview /></PrivateRoute>} />
           <Route
             path="/get-crs"
             element={
@@ -88,6 +87,15 @@ export default function App() {
             element={
               <PrivateRoute roles={["admin", "user"]}>
                 <Reports />
+              </PrivateRoute>
+            }
+          />
+
+          <Route
+            path="/settings"
+            element={
+              <PrivateRoute roles={["admin", "user"]}>
+                <Settings />
               </PrivateRoute>
             }
           />

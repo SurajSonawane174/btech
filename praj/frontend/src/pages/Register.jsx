@@ -47,7 +47,7 @@ export default function Register() {
 
         <div className="text-center mb-8 mt-2">
           <h2 className="text-3xl font-extrabold text-white mb-2 tracking-tight">Create Account</h2>
-          <p className="text-slate-300 font-medium">Join us and start scanning</p>
+          {/* <p className="text-slate-300 font-medium">Join us and start scanning</p> */}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -55,7 +55,7 @@ export default function Register() {
             <label className="block text-slate-200 font-bold mb-2 text-sm tracking-wide">Full Name</label>
             <input
               name="name"
-              placeholder="John Doe"
+              placeholder="Jon Snow"
               className="w-full bg-white/5 border border-white/10 text-white placeholder-slate-400 p-3.5 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/80 focus:bg-white/10 transition-all shadow-inner"
               onChange={handleChange}
               required

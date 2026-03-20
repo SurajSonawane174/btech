@@ -1,7 +1,11 @@
-import React from 'react';
-import { Search, Moon, Bell, Upload, Menu } from 'lucide-react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Moon, Sun, Bell, Upload, Menu } from 'lucide-react';
 
 export default function Navbar({ toggleSidebar }) {
+  const navigate = useNavigate();
+  const [isDark, setIsDark] = useState(false);
+
   return (
     <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 flex-shrink-0">
       <div className="flex items-center gap-4">
@@ -14,7 +18,6 @@ export default function Navbar({ toggleSidebar }) {
         
         <div>
           <h2 className="text-xl font-bold text-slate-800">Dashboard</h2>
-          {/* <p className="text-sm text-slate-500">Wed, 25 Feb 2026 — Welcome back, N. Admin</p> */}
         </div>
       </div>
       
@@ -28,14 +31,28 @@ export default function Navbar({ toggleSidebar }) {
           />
         </div>
         
-        <button className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-colors"><Moon size={20} /></button>
-        <button className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-colors relative">
+        {/* Dark / Light toggle — switches icon only */}
+        {/* <button
+          onClick={() => setIsDark(d => !d)}
+          className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-colors"
+        >
+          {isDark ? <Sun size={20} /> : <Moon size={20} />}
+        </button> */}
+
+        {/* Notifications */}
+        <button
+          onClick={() => navigate('/notifications')}
+          className="p-2 text-slate-500 hover:bg-slate-100 rounded-full transition-colors relative"
+        >
           <Bell size={20} />
           <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
         </button>
         
-        {/* Replaced your old React Router Link with the new design's button */}
-        <button className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm">
+        {/* Upload Drawing */}
+        <button
+          onClick={() => navigate('/upload')}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"
+        >
           <Upload size={16} /> Upload Drawing
         </button>
       </div>
