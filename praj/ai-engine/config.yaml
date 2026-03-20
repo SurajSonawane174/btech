@@ -1,0 +1,13 @@
+ocr:
+  enabled: true
+  dpi: 300
+
+classification:
+  similarity_threshold: 90
+  gemini_model: "gemini-pro"
+
+screenshot:
+  margin: 0.15
+
+processing:
+  workers: 2
