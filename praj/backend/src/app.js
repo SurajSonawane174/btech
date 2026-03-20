@@ -7,6 +7,8 @@ const bcrypt = require("bcrypt");
 const cors = require("cors"); 
 const pool = require("../db/db");
 const userRoutes = require("./routes/userRoutes");
+const documentRoutes = require("./routes/documentRoutes");
+const commentRoutes = require("./routes/commentRoutes");
 
 const app = express();
 const port = 8080;
@@ -106,6 +108,8 @@ passport.deserializeUser(async (id, done) => {
    ROUTES
 ========================================= */
 app.use("/api/users", userRoutes);
+app.use("/api/documents", documentRoutes);
+app.use("/api/comments", commentRoutes);
 
 /* =========================================
    SERVER
