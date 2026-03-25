@@ -14,6 +14,7 @@ import Reports from "./pages/Reports";
 import Notifications from "./pages/Notifications";
 import CRSReview from "./pages/CRSReview";
 import Settings from "./pages/Settings";
+import  api from "./api/axios"
 
 export default function App() {
   return (
