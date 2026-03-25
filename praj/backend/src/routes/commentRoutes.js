@@ -3,7 +3,7 @@ const router = express.Router();
 const commentController = require("../controllers/commentController");
 const { isLoggedIn } = require("../middleware/auth");
 
-router.use(isLoggedIn); // Protect all comment routes
+// router.use(isLoggedIn); // Protect all comment routes
 
 router.post("/", commentController.createComment);
 router.get("/document/:documentId", commentController.getCommentsByDocument);
