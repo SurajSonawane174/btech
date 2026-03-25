@@ -6,30 +6,46 @@ const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(() => {
     const token = localStorage.getItem("token");
+    const storedUser = localStorage.getItem("user");
+    
+    if (storedUser) {
+      try {
+        return JSON.parse(storedUser);
+      } catch (error) {
+        return null;
+      }
+    }
+    
     if (!token) return null;
     
     try {
-      // Try to decode a real token
       return jwtDecode(token);
     } catch (error) {
-      // If it fails (e.g., our mock token), log a warning and return a mock user
-      console.warn("Invalid token found, using mock user for bypass.");
-      return { role: "admin", name: "Test User" }; 
+      return null;
     }
   });
 
-  const login = (token) => {
-    localStorage.setItem("token", token);
-    try {
-      setUser(jwtDecode(token));
-    } catch (error) {
-      // Set a mock user so your dashboard has some data to work with
-      setUser({ role: "admin", name: "Test User" });
+  const login = (data) => {
+    // Handle both token and user object data
+    if (typeof data === 'string') {
+      // It's a token
+      localStorage.setItem("token", data);
+      try {
+        setUser(jwtDecode(data));
+      } catch (error) {
+        setUser({ role: "admin", name: "User" });
+      }
+    } else if (typeof data === 'object') {
+      // It's user data from session
+      localStorage.setItem("user", JSON.stringify(data));
+      localStorage.setItem("token", data.id); // Store user id as token placeholder
+      setUser(data);
     }
   };
 
   const logout = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("user");
     setUser(null);
   };
 

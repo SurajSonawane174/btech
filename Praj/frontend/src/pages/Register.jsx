@@ -25,11 +25,14 @@ export default function Register() {
     setLoading(true);
 
     try {
-      await api.post("/auth/register", form);
+      // Rename 'name' to 'username' to match backend schema
+      const { name, ...rest } = form;
+      await api.post("/api/users/register", { username: name, ...rest });
       alert("Account created successfully");
       navigate("/login");
     } catch (err) {
-      alert("Registration failed");
+      const errorMsg = err.response?.data?.message || "Registration failed";
+      alert(errorMsg);
     } finally {
       setLoading(false);
     }

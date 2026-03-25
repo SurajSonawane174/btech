@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-// import api from "../api/axios"; // Kept commented out for your mock
+import api from "../api/axios";
 import { useAuth } from "../auth/AuthContext";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -14,20 +15,23 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError("");
 
     try {
-      // ❌ COMMENT OUT THE REAL BACKEND CALL:
-      // const res = await api.post("/auth/login", { email, password });
+      // ✅ REAL BACKEND CALL:
+      const res = await api.post("/api/users/login", { email, password });
       
-      // ✅ FAKE A SMALL DELAY 
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      // ✅ MOCK A SUCCESSFUL LOGIN:
-      login("temporary-mock-jwt-token-123"); 
+      // Store token and user data
+      if (res.data.user) {
+        // For session-based auth, just set user info
+        login(res.data.user);
+      }
       
       navigate("/dashboard");
     } catch (err) {
-      alert("Invalid credentials");
+      const errorMsg = err.response?.data?.message || "Invalid credentials";
+      setError(errorMsg);
+      alert(errorMsg);
     } finally {
       setLoading(false);
     }
