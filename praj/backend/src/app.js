@@ -30,7 +30,7 @@ app.use(express.urlencoded({ extended: true }));
    CORS (IMPORTANT FOR REACT FRONTEND)
 ========================================= */
 app.use(cors({
-  origin: true, // React frontend
+  origin: "http://localhost:5173", // React frontend
   credentials: true               // Allow cookies/session
 }));
 
