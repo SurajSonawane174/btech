@@ -72,3 +72,66 @@ BEGIN
     RETURN new_comment_id;
 END;
 $$ LANGUAGE plpgsql;
+
+--
+CREATE OR REPLACE FUNCTION get_comment_by_id(
+    p_comment_id BIGINT
+)
+RETURNS SETOF comments AS $$
+BEGIN
+    RETURN QUERY
+    SELECT *
+    FROM comments
+    WHERE id = p_comment_id;
+END;
+$$ LANGUAGE plpgsql;
+
+--
+
+CREATE OR REPLACE FUNCTION get_comments_by_document(
+    p_document_id BIGINT
+)
+RETURNS SETOF comments AS $$
+BEGIN
+    RETURN QUERY
+    SELECT *
+    FROM comments
+    WHERE document_id = p_document_id
+    ORDER BY id;
+END;
+$$ LANGUAGE plpgsql;
+
+--
+
+CREATE OR REPLACE FUNCTION update_comment(
+    p_comment_id BIGINT,
+    p_actual_extracted_comment TEXT,
+    p_comment_color VARCHAR,
+    p_comment_category VARCHAR,
+    p_is_client_comment BOOLEAN,
+    p_is_handwritten BOOLEAN
+)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE comments
+    SET
+        actual_extracted_comment = p_actual_extracted_comment,
+        comment_color = p_comment_color,
+        comment_category = p_comment_category,
+        is_client_comment = p_is_client_comment,
+        is_handwritten = p_is_handwritten
+    WHERE id = p_comment_id;
+END;
+$$ LANGUAGE plpgsql;
+
+--
+
+CREATE OR REPLACE FUNCTION delete_comment(
+    p_comment_id BIGINT
+)
+RETURNS VOID AS $$
+BEGIN
+    DELETE FROM comments
+    WHERE id = p_comment_id;
+END;
+$$ LANGUAGE plpgsql;
