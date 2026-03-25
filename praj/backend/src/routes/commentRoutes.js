@@ -5,7 +5,7 @@ const { isLoggedIn } = require("../middleware/auth");
 
 // router.use(isLoggedIn); // Protect all comment routes
 
-router.post("/", commentController.createComment);
+router.post("/new", commentController.createComment);
 router.get("/document/:documentId", commentController.getCommentsByDocument);
 router.get("/:id", commentController.getCommentById);
 router.put("/:id", commentController.updateComment);
