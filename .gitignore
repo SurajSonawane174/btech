@@ -1,3 +1,24 @@
 
 **/node_modules/
+
+# Environment variables
 .env
+
+# Virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Output folders
+output/
+praj/ai-engine/output/
+
+# VS Code
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
