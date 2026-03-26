@@ -10,6 +10,8 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dotenv import load_dotenv
+
 
 import fitz
 import pandas as pd
@@ -19,7 +21,7 @@ from rapidfuzz import fuzz
 from tqdm import tqdm
 import google.generativeai as genai
 
-
+load_dotenv()
 # ============================
 # CONFIG MODEL
 # ============================
@@ -318,7 +320,12 @@ class DrawingReview:
 # WORKER FUNCTION
 # ============================
 
+
 def worker(pdf_path: Path, config: ExtractionConfig):
+    load_dotenv()
+    key = os.getenv("GEMINI_API_KEY")
+    print(f"DEBUG worker key: {repr(key)}")  # ← add this
+    genai.configure(api_key=key)
     engine = DrawingReview(config)
     return engine.process_pdf(pdf_path)
 
