@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Layout from '../components/Layout';
+import api from '../api/axios';
 import { FileText, Download, FileSpreadsheet, Image as ImageIcon, Calendar } from 'lucide-react';
 
 export default function CRSReview() {
@@ -19,9 +20,9 @@ export default function CRSReview() {
 
   useEffect(() => {
     const id = drawingNo || 'PRAJ-001';
-    fetch(`/api/crs/drawing/${id}/metadata`).then(r => r.json()).then(setMetadata).catch(console.error);
-    fetch(`/api/crs/drawing/${id}/comments`).then(r => r.json()).then(setTableData).catch(console.error);
-    fetch('/api/engineers').then(r => r.json()).then(setEngineers).catch(console.error);
+    api.get(`/api/crs/drawing/${id}/metadata`).then(r => setMetadata(r.data)).catch(console.error);
+    api.get(`/api/crs/drawing/${id}/comments`).then(r => setTableData(r.data)).catch(console.error);
+    api.get('/api/engineers').then(r => setEngineers(r.data)).catch(console.error);
   }, [drawingNo]);
 
   function setField(rowIndex, field, value) {
@@ -40,11 +41,7 @@ export default function CRSReview() {
       evidence:   edits.evidence   ?? row.ev,
     };
     try {
-      await fetch(`/api/crs/drawing/${drawingNo}/comments/${row.cId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      await api.patch(`/api/crs/drawing/${drawingNo}/comments/${row.cId}`, payload);
       setTableData(prev => prev.map((r, i) => i === rowIndex ? { ...r, ...payload, res: payload.resolution, ev: payload.evidence } : r));
       setRowEdits(prev => { const n = { ...prev }; delete n[rowIndex]; return n; });
     } catch (err) {
@@ -54,8 +51,8 @@ export default function CRSReview() {
 
   async function handleDownload(format) {
     try {
-      const res = await fetch(`/api/crs/drawing/${drawingNo}/export/${format}`);
-      const blob = await res.blob();
+      const res = await api.get(`/api/crs/drawing/${drawingNo}/export/${format}`, { responseType: 'blob' });
+      const blob = res.data;
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

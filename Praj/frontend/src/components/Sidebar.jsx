@@ -1,3 +1,4 @@
+import { useAuth } from '../auth/AuthContext';
 import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { 
@@ -6,10 +7,22 @@ import {
   LogOut
 } from 'lucide-react';
 
+
+
 export default function Sidebar({ isOpen }) {
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef(null);
   const navigate = useNavigate();
+  
+  const { user, logout } = useAuth();
+
+  // Build initials and display name from the real user object
+  const initials = user?.name
+    ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+    : (user?.email?.[0] ?? '?').toUpperCase();
+
+  const displayName = user?.name || user?.email || 'User';
+  const displayId   = user?.email || user?.id || '';
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -23,11 +36,9 @@ export default function Sidebar({ isOpen }) {
   }, []);
 
   function handleLogout() {
-    // Clear auth tokens/session — adjust to match your AuthContext logout method
-    localStorage.removeItem('token');
-    sessionStorage.clear();
-    navigate('/login');
-  }
+  logout(); // use AuthContext logout — clears localStorage + user state
+  navigate('/login');
+ }
 
   const navItemStyles = ({ isActive }) => 
     `flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-300 group ${
@@ -150,10 +161,10 @@ export default function Sidebar({ isOpen }) {
               onClick={() => navigate('/settings')}
               className="flex items-center gap-3 flex-1 min-w-0"
             >
-              <div className="w-9 h-9 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow-[0_0_10px_rgba(37,99,235,0.3)] border border-blue-400/20 flex-shrink-0">CP</div>
+              <div className="w-9 h-9 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow-[0_0_10px_rgba(37,99,235,0.3)] border border-blue-400/20 flex-shrink-0">{initials}</div>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-blue-50 group-hover:text-white transition-colors truncate">CP Admin</p>
-                <p className="text-xs text-blue-300/70 truncate">cpc-admin</p>
+                <p className="text-sm font-medium text-blue-50 group-hover:text-white transition-colors truncate">{displayName}</p>
+                <p className="text-xs text-blue-300/70 truncate">{displayId}</p>
               </div>
             </div>
 

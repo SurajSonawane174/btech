@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
+import api from '../api/axios';
 import { Search, Folder } from 'lucide-react';
 
 export default function Comments() {
@@ -22,8 +23,8 @@ export default function Comments() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ drawingNo: dNo, supplier: sup, status: sts });
-      const res = await fetch(`/api/drawings?${params}`);
-      const data = await res.json();
+      const res = await api.get(`/api/drawings?${params.toString()}`);
+      const data = res.data;
       setDrawings(data.drawings);
       setTotal(data.total);
     } catch (err) {
