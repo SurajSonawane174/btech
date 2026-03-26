@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { User, Lock, Bell, Settings2 } from 'lucide-react';
+import { useAuth } from '../auth/AuthContext';
 
 function Toggle({ checked, onChange }) {
   return (
@@ -20,60 +21,68 @@ function Toggle({ checked, onChange }) {
 }
 
 export default function Settings() {
+  const { user } = useAuth();
+
   // ── User Profile ──────────────────────────────────────────────────
-  const [profile, setProfile] = useState({ firstName: 'Nitin', lastName: 'P', email: 'admin@ecc.engineering', role: 'admin' });
+  const [profile, setProfile] = useState({
+    firstName: '',
+    lastName:  '',
+    email:     '',
+    role:      '',
+  });
   const [profileSaving, setProfileSaving] = useState(false);
 
   // ── Security ──────────────────────────────────────────────────────
   const [passwords, setPasswords] = useState({ current: '', newPass: '', confirm: '' });
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMsg, setPasswordMsg] = useState('');
 
   // ── Notification Preferences ──────────────────────────────────────
   const [notifications, setNotifications] = useState({
-    overdueAlerts: true,
-    newAssignments: true,
-    drawingProcessed: true,
-    lowOcrConfidence: false,
-    emailDigest: false,
+    overdueAlerts:     true,
+    newAssignments:    true,
+    drawingProcessed:  true,
+    lowOcrConfidence:  false,
+    emailDigest:       false,
   });
 
   // ── OCR & Processing ──────────────────────────────────────────────
   const [ocr, setOcr] = useState({
     confidenceThreshold: 70,
-    defaultLanguage: 'English',
-    autoAssignTo: 'Round Robin',
-    autoGenerateCrs: true,
+    defaultLanguage:     'English',
+    autoAssignTo:        'Round Robin',
+    autoGenerateCrs:     true,
   });
   const [ocrSaving, setOcrSaving] = useState(false);
 
+  // Seed profile from logged-in user — runs once when user loads from AuthContext
   useEffect(() => {
-    async function fetchSettings() {
-      try {
-        const [profileRes, notifRes, ocrRes] = await Promise.all([
-          fetch('/api/settings/profile'),
-          fetch('/api/settings/notifications'),
-          fetch('/api/settings/ocr'),
-        ]);
-        const [profileData, notifData, ocrData] = await Promise.all([
-          profileRes.json(),
-          notifRes.json(),
-          ocrRes.json(),
-        ]);
-        setProfile(profileData);
-        setNotifications(notifData);
-        setOcr(ocrData);
-      } catch (err) {
-        console.error('Failed to fetch settings:', err);
-      }
-    }
-    fetchSettings();
-  }, []);
+    if (!user) return;
+
+    // Your backend stores: { id, name, email, role } — adjust field names if different
+    const nameParts = (user.name || user.username || '').split(' ');
+    setProfile({
+      firstName: nameParts[0] || '',
+      lastName:  nameParts.slice(1).join(' ') || '',
+      email:     user.email || '',
+      role:      user.role  || 'user',
+    });
+  }, [user]);
+
+  // Computed values
+  const initials = [profile.firstName?.[0], profile.lastName?.[0]]
+    .filter(Boolean)
+    .join('')
+    .toUpperCase() || '??';
+
+  // ── Handlers ─────────────────────────────────────────────────────
 
   async function handleSaveProfile() {
     setProfileSaving(true);
     try {
-      await fetch('/api/settings/profile', {
+      await fetch('/api/users/profile', {
         method: 'PUT',
+        credentials: 'include',          // send session cookie
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(profile),
       });
@@ -85,39 +94,40 @@ export default function Settings() {
   }
 
   async function handleUpdatePassword() {
-    if (passwords.newPass !== passwords.confirm) {
-      alert('New passwords do not match.');
-      return;
-    }
+    setPasswordMsg('');
+    if (!passwords.current) return setPasswordMsg('Enter your current password.');
+    if (passwords.newPass.length < 6) return setPasswordMsg('New password must be at least 6 characters.');
+    if (passwords.newPass !== passwords.confirm) return setPasswordMsg('New passwords do not match.');
+
     setPasswordSaving(true);
     try {
-      await fetch('/api/settings/password', {
+      const res = await fetch('/api/users/password', {
         method: 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword: passwords.current, newPassword: passwords.newPass }),
+        body: JSON.stringify({
+          currentPassword: passwords.current,
+          newPassword:     passwords.newPass,
+        }),
       });
-      setPasswords({ current: '', newPass: '', confirm: '' });
+      if (res.ok) {
+        setPasswords({ current: '', newPass: '', confirm: '' });
+        setPasswordMsg('Password updated successfully.');
+      } else {
+        const data = await res.json();
+        setPasswordMsg(data.message || 'Update failed.');
+      }
     } catch (err) {
       console.error('Password update failed:', err);
+      setPasswordMsg('Server error. Try again.');
     } finally {
       setPasswordSaving(false);
     }
   }
 
-  async function handleToggleNotification(key, value) {
-    const updated = { ...notifications, [key]: value };
-    setNotifications(updated);
-    try {
-      await fetch('/api/settings/notifications', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated),
-      });
-    } catch (err) {
-      console.error('Notification update failed:', err);
-      // Revert on failure
-      setNotifications(notifications);
-    }
+  function handleToggleNotification(key, value) {
+    setNotifications(prev => ({ ...prev, [key]: value }));
+    // No backend for notifications yet — add later when route exists
   }
 
   async function handleSaveOcr() {
@@ -125,6 +135,7 @@ export default function Settings() {
     try {
       await fetch('/api/settings/ocr', {
         method: 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ocr),
       });
@@ -134,9 +145,6 @@ export default function Settings() {
       setOcrSaving(false);
     }
   }
-
-  // Initials for avatar
-  const initials = `${profile.firstName?.[0] ?? ''}${profile.lastName?.[0] ?? ''}`.toUpperCase() || 'NA';
 
   return (
     <Layout>
@@ -150,7 +158,7 @@ export default function Settings() {
 
         <div className="grid grid-cols-3 gap-6 items-start">
 
-          {/* ── Left Column ─────────────────────────────────────────── */}
+          {/* ── Left Column ──────────────────────────────────────────── */}
           <div className="col-span-2 space-y-6">
 
             {/* User Profile Card */}
@@ -166,7 +174,9 @@ export default function Settings() {
                   {initials}
                 </div>
                 <div>
-                  <p className="font-semibold text-slate-800">{profile.firstName} {profile.lastName}</p>
+                  <p className="font-semibold text-slate-800">
+                    {profile.firstName} {profile.lastName}
+                  </p>
                   <p className="text-xs text-slate-500">{profile.email}</p>
                   <span className="inline-flex items-center gap-1 mt-1 text-[11px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
@@ -208,18 +218,15 @@ export default function Settings() {
                 />
               </div>
 
-              {/* Role */}
+              {/* Role — read only, user can't change their own role */}
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Role</label>
-                <select
+                <input
+                  type="text"
                   value={profile.role}
-                  onChange={e => setProfile(p => ({ ...p, role: e.target.value }))}
-                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
-                >
-                  <option>ECC Admin</option>
-                  <option>Engineer</option>
-                  <option>Viewer</option>
-                </select>
+                  readOnly
+                  className="w-full px-3 py-2.5 bg-slate-100 border border-slate-200 rounded-lg text-sm text-slate-500 outline-none cursor-not-allowed"
+                />
               </div>
 
               <button
@@ -269,6 +276,15 @@ export default function Settings() {
                 />
               </div>
 
+              {/* Inline feedback message */}
+              {passwordMsg && (
+                <p className={`text-xs font-medium ${
+                  passwordMsg.includes('successfully') ? 'text-emerald-600' : 'text-red-500'
+                }`}>
+                  {passwordMsg}
+                </p>
+              )}
+
               <button
                 onClick={handleUpdatePassword}
                 disabled={passwordSaving}
@@ -290,11 +306,11 @@ export default function Settings() {
               </div>
 
               {[
-                { key: 'overdueAlerts', label: 'Overdue Alerts', desc: 'Notify when CRS items pass target date' },
-                { key: 'newAssignments', label: 'New Assignments', desc: 'Notify when comments are assigned to you' },
-                { key: 'drawingProcessed', label: 'Drawing Processed', desc: 'Notify when OCR completes on a drawing' },
-                { key: 'lowOcrConfidence', label: 'Low OCR Confidence', desc: 'Alert when comments score below 70%' },
-                { key: 'emailDigest', label: 'Email Digest', desc: 'Daily summary email at 8am' },
+                { key: 'overdueAlerts',    label: 'Overdue Alerts',      desc: 'Notify when CRS items pass target date'       },
+                { key: 'newAssignments',   label: 'New Assignments',      desc: 'Notify when comments are assigned to you'     },
+                { key: 'drawingProcessed', label: 'Drawing Processed',    desc: 'Notify when OCR completes on a drawing'       },
+                { key: 'lowOcrConfidence', label: 'Low OCR Confidence',   desc: 'Alert when comments score below 70%'          },
+                { key: 'emailDigest',      label: 'Email Digest',         desc: 'Daily summary email at 8am'                   },
               ].map(item => (
                 <div key={item.key} className="flex items-center justify-between gap-4">
                   <div>

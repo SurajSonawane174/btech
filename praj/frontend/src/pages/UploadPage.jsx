@@ -28,30 +28,37 @@ export default function UploadPage() {
   const [currentStep, setCurrentStep]   = useState(-1);   // -1 = idle
   const [completedSteps, setCompleted]  = useState([]);
   const [done, setDone]                 = useState(false);
+  const [extractedComments, setExtractedComments] = useState([]);
 
   // Called by FileUpload — drives the step animation
   async function runSteps() {
-    setDone(false);
-    setCompleted([]);
-    setLoading(true);
+  setDone(false);
+  setCompleted([]);
 
-    for (let i = 0; i < STEPS.length; i++) {
-      setCurrentStep(i);
-      // Each step takes ~1.2s so the demo is visible
-      await new Promise(res => setTimeout(res, 1200));
-      setCompleted(prev => [...prev, i]);
-    }
-
-    setCurrentStep(-1);
-    setLoading(false);
-    setDone(true);
+  // Animate steps timed to real processing
+  // Steps 0-1 complete quickly (upload done), 2-4 span the scan duration
+  for (let i = 0; i < STEPS.length; i++) {
+    setCurrentStep(i);
+    await new Promise(res => setTimeout(res, i < 2 ? 600 : 1400));
+    setCompleted(prev => [...prev, i]);
   }
+
+  setCurrentStep(-1);
+  setDone(true);
+ }
 
   function resetStatus() {
     setCurrentStep(-1);
     setCompleted([]);
     setDone(false);
+    setExtractedComments([]);
   }
+
+  function handleProcessComplete(payload) {
+  const comments = payload?.comments || [];
+  setExtractedComments(comments);
+  // runSteps is already running in parallel from FileUpload's onProcess call
+ }
 
   const getStepState = (i) => {
     if (completedSteps.includes(i)) return 'done';
@@ -71,7 +78,13 @@ export default function UploadPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
           {/* Left Column */}
-          <FileUpload loading={loading} setLoading={setLoading} onProcess={runSteps} onReset={resetStatus} />
+          <FileUpload
+            loading={loading}
+            setLoading={setLoading}
+            onProcess={runSteps}
+            onReset={resetStatus}
+            onComplete={handleProcessComplete}
+          />
 
           {/* Right Column */}
           <div className="space-y-6">
@@ -158,7 +171,7 @@ export default function UploadPage() {
                   <MessageSquare size={16} className="text-purple-500" /> Extracted Comments
                 </div>
                 <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                  {done ? `${MOCK_COMMENTS.length} found` : '0 found'}
+                  {done ? `${extractedComments.length} found` : '0 found'}
                 </span>
               </div>
               <div className="p-4 flex gap-4 text-xs font-bold text-slate-400 uppercase tracking-wide border-b border-slate-100">
@@ -169,21 +182,18 @@ export default function UploadPage() {
 
               {done ? (
                 <div className="divide-y divide-slate-50">
-                  {MOCK_COMMENTS.map((c, i) => (
+                  {extractedComments.map((c, i) => (
                     <div key={i} className="px-4 py-2.5 flex items-center text-sm">
-                      <span className="flex-1 font-bold text-indigo-600">{c.id}</span>
-                      <span className="flex-1 text-slate-500">Page {c.page}</span>
+                      <span className="flex-1 font-bold text-indigo-600">{c.comment_id}</span>
+                      <span className="flex-1 text-slate-500">Page {c.page_sheet || '-'}</span>
                       <span className="flex-1 text-right">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                          c.status === 'Open'        ? 'bg-red-50 text-red-600 border-red-100' :
-                          c.status === 'In Progress' ? 'bg-amber-50 text-amber-600 border-amber-100' :
-                          'bg-emerald-50 text-emerald-600 border-emerald-100'
+                          'bg-red-50 text-red-600 border-red-100'
                         }`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${
-                            c.status === 'Open' ? 'bg-red-500' :
-                            c.status === 'In Progress' ? 'bg-amber-500' : 'bg-emerald-500'
+                            'bg-red-500'
                           }`} />
-                          {c.status}
+                          Open
                         </span>
                       </span>
                     </div>

@@ -11,6 +11,8 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dotenv import load_dotenv
+
 
 from dotenv import load_dotenv
 from pathlib import Path
@@ -28,7 +30,7 @@ from tqdm import tqdm
 from google import genai
 from google.genai import types as genai_types
 
-
+load_dotenv()
 # ============================
 # CONFIG MODEL
 # ============================
