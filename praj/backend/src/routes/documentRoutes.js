@@ -4,8 +4,7 @@ const documentController = require("../controllers/documentController");
 const { isLoggedIn } = require("../middleware/auth");
 
 router.use(isLoggedIn); // Protect all document routes
-// Import the controller (adjust the path based on your folder structure)
-const documentController = require('../controllers/documentController');
+
 
 // CREATE / GET Document
 // POST /api/documents
