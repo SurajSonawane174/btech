@@ -15,8 +15,8 @@ Pillow==12.1.1
 # Fuzzy matching
 RapidFuzz==3.14.3
 
-# AI classification
-google-generativeai==0.8.6
+# AI classification (new official SDK — replaces deprecated google-generativeai)
+google-genai>=1.0.0
 
 # Data output
 pandas==3.0.0

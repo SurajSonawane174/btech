@@ -18,9 +18,10 @@ from PIL import Image
 import pytesseract
 from rapidfuzz import fuzz
 from tqdm import tqdm
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
 # ============================
 # CONFIG MODEL
 # ============================
@@ -291,8 +292,8 @@ class DrawingReview:
         self.config = config
         self.previous_comments: List[str] = []
         self.ocr_engine = OCREngine(config)
-        # Initialize Gemini client once per worker
-        self.gemini_client = genai.GenerativeModel(self.config.gemini_model)
+        # Initialize Gemini client once per worker (new google-genai SDK)
+        self.gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     # --------------------------
     # METADATA EXTRACTION
@@ -388,8 +389,11 @@ class DrawingReview:
         )
 
         try:
-            response = self.gemini_client.generate_content(prompt)
-            result   = response.text.strip().lower()
+            response = self.gemini_client.models.generate_content(
+                model=self.config.gemini_model,
+                contents=prompt
+            )
+            result = response.text.strip().lower()
 
             # Validate response
             if result in ("technical", "aesthetic"):
@@ -736,7 +740,6 @@ def worker(pdf_path: Path, config: ExtractionConfig) -> Tuple[str, int]:
     Each worker gets its own DrawingReview instance (and Gemini client).
     """
     try:
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         engine = DrawingReview(config)
         count  = engine.process_pdf(pdf_path)
         return pdf_path.name, count
@@ -800,15 +803,15 @@ def main():
                                         "scanned_text_threshold", 50)
     )
 
-    # ---- Configure Gemini API key ----
+    # ---- Validate Gemini API key is set ----
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise EnvironmentError(
             "GEMINI_API_KEY environment variable is not set.\n"
-            "Create a .env file or export it in your shell:\n"
-            "  export GEMINI_API_KEY=your_key_here"
+            "Create a .env file or set it in your shell:\n"
+            "  Windows PowerShell: $env:GEMINI_API_KEY = 'your_key_here'\n"
+            "  Mac/Linux:          export GEMINI_API_KEY=your_key_here"
         )
-    genai.configure(api_key=api_key)
 
     # ---- Collect PDF files ----
     input_path = Path(args.input)
