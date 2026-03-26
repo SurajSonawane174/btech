@@ -27,6 +27,8 @@ export default function Comments() {
       const data = res.data;
       setDrawings(data.drawings);
       setTotal(data.total);
+      console.log(res.data);
+      
     } catch (err) {
       console.error('Failed to fetch drawings:', err);
     } finally {
