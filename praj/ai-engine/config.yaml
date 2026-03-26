@@ -33,10 +33,11 @@ classification:
   similarity_threshold: 90   # RapidFuzz ratio threshold for "repeated" detection (0–100)
                               #   - 90: Strict (only near-identical comments flagged)
                               #   - 80: Relaxed (more comments flagged as repeated)
-  gemini_model: "gemini-1.5-flash"  # Gemini model to use
+  gemini_model: "gemini-2.0-flash-lite"    # Gemini model to use
                                      # Options:
-                                     #   - gemini-1.5-flash  (fast, cost-effective)
-                                     #   - gemini-1.5-pro    (higher accuracy)
+                                     #   - gemini-2.0-flash      (fast, cost-effective — recommended)
+                                     #   - gemini-2.0-flash-lite (cheapest)
+                                     #   - gemini-1.5-pro        (highest accuracy, older)
 
 # ---- Unique ID Settings ----
 uid:
