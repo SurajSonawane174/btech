@@ -21,3 +21,7 @@ ALTER COLUMN supplier_po_number  SET NOT NULL;
 ALTER TABLE documents
 ADD CONSTRAINT unique_doc_revision
 UNIQUE (praj_project_number, praj_document_number, praj_revision_number, supplier_name, supplier_po_number);
+
+-- unique constraint for comment_id in comments table
+ALTER TABLE comments
+ADD CONSTRAINT unique_comment_id UNIQUE (comment_id);

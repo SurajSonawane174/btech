@@ -86,14 +86,14 @@ $$ LANGUAGE plpgsql;
 --
 
 CREATE OR REPLACE FUNCTION get_comment_by_id(
-    p_comment_id BIGINT
+    p_comment_id VARCHAR  -- changed from BIGINT to VARCHAR
 )
 RETURNS SETOF comments AS $$
 BEGIN
     RETURN QUERY
     SELECT *
     FROM comments
-    WHERE id = p_comment_id;
+    WHERE comment_id = p_comment_id;  -- query by business key
 END;
 $$ LANGUAGE plpgsql;
 
