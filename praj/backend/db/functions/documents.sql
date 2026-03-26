@@ -49,3 +49,13 @@ BEGIN
     RETURN doc_id;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_all_documents()
+RETURNS SETOF documents AS $$
+BEGIN
+    RETURN QUERY
+    SELECT *
+    FROM documents
+    ORDER BY id;
+END;
+$$ LANGUAGE plpgsql;
