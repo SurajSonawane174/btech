@@ -1,32 +1,42 @@
+-- =========================================
+-- COMMENT FUNCTIONS
+-- =========================================
+
 CREATE OR REPLACE FUNCTION insert_comment_from_json(
-    p_praj_doc_number VARCHAR,
-    p_praj_revision_number VARCHAR,
-    p_customer_document_number VARCHAR,
-    p_customer_revision VARCHAR,
-    p_page_sheet VARCHAR,
-    p_comment_id VARCHAR,
-    p_actual_extracted_comment TEXT,
-    p_snapshot_file VARCHAR,
-    p_name_of_person_commented VARCHAR,
-    p_date_of_comment VARCHAR,
-    p_time_of_comment VARCHAR,
-    p_comment_color VARCHAR,
-    p_is_client_comment VARCHAR,
-    p_comment_category VARCHAR,
-    p_is_handwritten VARCHAR,
+    p_praj_project_number          VARCHAR,
+    p_praj_document_number         VARCHAR,
+    p_praj_revision_number         VARCHAR,
+    p_supplier_name                VARCHAR,
+    p_supplier_po_number           VARCHAR,
+    p_customer_document_number     VARCHAR,
+    p_customer_revision            VARCHAR,
+    p_page_sheet                   VARCHAR,
+    p_comment_id                   VARCHAR,
+    p_actual_extracted_comment     TEXT,
+    p_snapshot_file                VARCHAR,
+    p_name_of_person_commented     VARCHAR,
+    p_date_of_comment              VARCHAR,
+    p_time_of_comment              VARCHAR,
+    p_comment_color                VARCHAR,
+    p_is_client_comment            VARCHAR,
+    p_comment_category             VARCHAR,
+    p_is_handwritten               VARCHAR,
     p_extraction_confidence_percent NUMERIC
 )
 RETURNS BIGINT AS $$
 DECLARE
-    doc_id BIGINT;
-    new_comment_id BIGINT;
-    final_timestamp TIMESTAMP;
+    doc_id           BIGINT;
+    new_comment_id   BIGINT;
+    final_timestamp  TIMESTAMP;
 BEGIN
 
     -- 1️⃣ Get or create document
     doc_id := get_or_create_document(
-        p_praj_doc_number,
+        p_praj_project_number,
+        p_praj_document_number,
         p_praj_revision_number,
+        p_supplier_name,
+        p_supplier_po_number,
         p_customer_document_number,
         p_customer_revision
     );
@@ -74,15 +84,16 @@ END;
 $$ LANGUAGE plpgsql;
 
 --
+
 CREATE OR REPLACE FUNCTION get_comment_by_id(
-    p_comment_id BIGINT
+    p_comment_id VARCHAR  -- changed from BIGINT to VARCHAR
 )
 RETURNS SETOF comments AS $$
 BEGIN
     RETURN QUERY
     SELECT *
     FROM comments
-    WHERE id = p_comment_id;
+    WHERE comment_id = p_comment_id;  -- query by business key
 END;
 $$ LANGUAGE plpgsql;
 
@@ -104,22 +115,22 @@ $$ LANGUAGE plpgsql;
 --
 
 CREATE OR REPLACE FUNCTION update_comment(
-    p_comment_id BIGINT,
+    p_comment_id               BIGINT,
     p_actual_extracted_comment TEXT,
-    p_comment_color VARCHAR,
-    p_comment_category VARCHAR,
-    p_is_client_comment BOOLEAN,
-    p_is_handwritten BOOLEAN
+    p_comment_color            VARCHAR,
+    p_comment_category         VARCHAR,
+    p_is_client_comment        BOOLEAN,
+    p_is_handwritten           BOOLEAN
 )
 RETURNS VOID AS $$
 BEGIN
     UPDATE comments
     SET
         actual_extracted_comment = p_actual_extracted_comment,
-        comment_color = p_comment_color,
-        comment_category = p_comment_category,
-        is_client_comment = p_is_client_comment,
-        is_handwritten = p_is_handwritten
+        comment_color            = p_comment_color,
+        comment_category         = p_comment_category,
+        is_client_comment        = p_is_client_comment,
+        is_handwritten           = p_is_handwritten
     WHERE id = p_comment_id;
 END;
 $$ LANGUAGE plpgsql;

@@ -1,5 +1,8 @@
-require("dotenv").config();
-const pool = require("./db");
+require("dotenv").config({
+  path: require("path").resolve(__dirname, "../.env"),
+});
+
+const pool = require("./pool");
 
 async function testDB() {
   try {
