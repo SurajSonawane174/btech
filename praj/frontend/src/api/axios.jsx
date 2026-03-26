@@ -2,11 +2,15 @@ import axios from "axios";
 
 const api = axios.create({
   baseURL: "http://localhost:8080",
-  withCredentials: true, // This is all you need — sends the session cookie
+   withCredentials: true  
 });
 
-// REMOVED the interceptor that added Bearer token
-// Your backend uses Passport sessions, not JWT. The withCredentials above
-// sends the session cookie automatically on every request.
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 export default api;

@@ -2,24 +2,12 @@ import React, { useState, useRef } from 'react';
 import api from '../api/axios';
 import { UploadCloud, FileText, Settings, X, Loader2 } from 'lucide-react';
 
-const DEFAULT_META = {
-  docNumber: '',
-  revision: '',
-  customerDocNo: '',
-  customerRevision: '',
-  supplierName: '',
-  supplierPo: '',
-  pageSheet: '1',
-  drawingType: 'P&ID',
-};
-
-export default function FileUpload({ loading, setLoading, onProcess, onReset, onComplete }) {
-  const [files, setFiles]     = useState([]);
+export default function FileUpload({ loading, setLoading, onProcess, onReset }) {
+  const [files, setFiles]       = useState([]);
   const [dragOver, setDragOver] = useState(false);
-  const [meta, setMeta]       = useState(DEFAULT_META); // FIX: controlled state
-  const fileInputRef          = useRef(null);
+  const fileInputRef            = useRef(null);
 
-  const handleDragOver  = (e) => { e.preventDefault(); setDragOver(true); };
+  const handleDragOver  = (e) => { e.preventDefault(); setDragOver(true);  };
   const handleDragLeave = (e) => { e.preventDefault(); setDragOver(false); };
 
   const handleDrop = (e) => {
@@ -40,47 +28,24 @@ export default function FileUpload({ loading, setLoading, onProcess, onReset, on
     onReset?.();
   };
 
-  const updateMeta = (key, value) => setMeta(prev => ({ ...prev, [key]: value }));
-
   const handleProcessDrawing = async () => {
-    if (!files.length) return alert("Please select a file first.");
+    if (!files.length) return alert("Please select a file to process first.");
 
     try {
-      setLoading(true);
-
-      // Step 1: Upload the file
-      const formData = new FormData();
-      for (let file of files) formData.append("files", file);
-      await api.post("/api/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      // Step 2: Kick off the visual animation in parent (non-blocking)
+      // Kick off the step animation in the parent
       onProcess?.();
 
-      // Step 3: Trigger the AI scan
-      const scanResponse = await api.post("/api/scan");
-
-      // Step 4: Pass results up
-      onComplete?.(scanResponse.data);
+      const formData = new FormData();
+      for (let file of files) formData.append("files", file);
+      await api.post("/upload", formData);
+      await api.post("/scan");
 
     } catch (err) {
-      console.error("Processing failed:", err);
-      const msg = err.response?.data?.message || "Processing failed. Check server logs.";
-      alert(msg);
+      console.error(err);
+      alert("Processing failed. Please check the network tab or server logs.");
       setLoading(false);
     }
   };
-
-  const metaFields = [
-    { label: "DOC NUMBER",        key: "docNumber",        placeholder: "e.g. chait-001" },
-    { label: "REVISION",          key: "revision",         placeholder: "e.g. A" },
-    { label: "CUSTOMER DOC NO",   key: "customerDocNo",    placeholder: "CUST-001" },
-    { label: "CUSTOMER REVISION", key: "customerRevision", placeholder: "1" },
-    { label: "SUPPLIER NAME",     key: "supplierName",     placeholder: "ABC Engineering" },
-    { label: "SUPPLIER PO",       key: "supplierPo",       placeholder: "PO-7788" },
-    { label: "PAGE / SHEET",      key: "pageSheet",        placeholder: "1" },
-  ];
 
   return (
     <div className="col-span-2 space-y-6">
@@ -110,6 +75,7 @@ export default function FileUpload({ loading, setLoading, onProcess, onReset, on
               onChange={handleFileSelect}
               className="hidden"
             />
+
             {files.length > 0 ? (
               <div className="w-full text-left space-y-3">
                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">
@@ -145,35 +111,33 @@ export default function FileUpload({ loading, setLoading, onProcess, onReset, on
         </div>
       </div>
 
-      {/* Metadata Form — now controlled */}
+      {/* Metadata Form */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="bg-slate-50 p-4 border-b border-slate-100 flex items-center gap-2 font-bold text-slate-700">
           <FileText size={18} className="text-emerald-500" /> Drawing Metadata
         </div>
         <div className="p-6 grid grid-cols-2 gap-5">
-          {metaFields.map((field) => (
-            <div key={field.key}>
-              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
-                {field.label}
-              </label>
+          {[
+            { label: "DOC NUMBER",       val: "chait-001"       },
+            { label: "REVISION",         val: "A"               },
+            { label: "CUSTOMER DOC NO",  val: "CUST-001"        },
+            { label: "CUSTOMER REVISION",val: "1"               },
+            { label: "SUPPLIER NAME",    val: "ABC Engineering" },
+            { label: "SUPPLIER PO",      val: "PO-7788"         },
+            { label: "PAGE / SHEET",     val: "1"               },
+          ].map((field, i) => (
+            <div key={i}>
+              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">{field.label}</label>
               <input
                 type="text"
-                value={meta[field.key]}
-                onChange={e => updateMeta(field.key, e.target.value)}
-                placeholder={field.placeholder}
+                defaultValue={field.val}
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
               />
             </div>
           ))}
           <div>
-            <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
-              DRAWING TYPE
-            </label>
-            <select
-              value={meta.drawingType}
-              onChange={e => updateMeta('drawingType', e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none transition-all"
-            >
+            <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">DRAWING TYPE</label>
+            <select className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none transition-all">
               <option>P&ID</option>
               <option>Isometric</option>
               <option>Structural</option>

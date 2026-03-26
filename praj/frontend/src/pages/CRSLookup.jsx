@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
-import api from '../api/axios';
 import { Search, Download, FileSearch } from 'lucide-react';
 
 export default function CRSLookup() {
@@ -24,8 +23,8 @@ export default function CRSLookup() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ drawingNo: dNo, supplier: sup, po: poVal, status: sts });
-      const res = await api.get(`/api/crs/lookup?${params.toString()}`);
-      const data = res.data;
+      const res = await fetch(`/api/crs/lookup?${params}`);
+      const data = await res.json();
       setResults(data.results);
       setTotal(data.total);
     } catch (err) {
@@ -47,8 +46,8 @@ export default function CRSLookup() {
   async function handleExport() {
     try {
       const params = new URLSearchParams({ drawingNo, supplier, po, status });
-      const res = await api.get(`/api/crs/export?${params.toString()}`, { responseType: 'blob' });
-      const blob = res.data;
+      const res = await fetch(`/api/crs/export?${params}`);
+      const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

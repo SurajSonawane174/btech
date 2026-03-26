@@ -16,26 +16,11 @@ export default function Dashboard() {
   const [engineers, setEngineers] = useState([]);
 
   useEffect(() => {
-    fetch('http://localhost:8080/api/comments/PRJ001-DWG001-001-053-005')
-  .then(async (res) => {
-    console.log("STATUS:", res.status);
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text);
-    }
-
-    return res.json();
-  })
-  .then(data => {
-    console.log("DATA:", data);
-    setDrawings(data);
-  })
-  .catch(err => console.error("FETCH ERROR:", err));
-    // fetch('/api/dashboard/recent-drawings').then(r => r.json()).then(setDrawings).catch(console.error);
-    // fetch('/api/dashboard/crs-status').then(r => r.json()).then(setCrsStatus).catch(console.error);
-    // fetch('/api/dashboard/categories').then(r => r.json()).then(setCategories).catch(console.error);
-    // fetch('/api/dashboard/engineer-workload').then(r => r.json()).then(setEngineers).catch(console.error);
+    fetch('/api/dashboard/stats').then(r => r.json()).then(setStats).catch(console.error);
+    fetch('/api/dashboard/recent-drawings').then(r => r.json()).then(setDrawings).catch(console.error);
+    fetch('/api/dashboard/crs-status').then(r => r.json()).then(setCrsStatus).catch(console.error);
+    fetch('/api/dashboard/categories').then(r => r.json()).then(setCategories).catch(console.error);
+    fetch('/api/dashboard/engineer-workload').then(r => r.json()).then(setEngineers).catch(console.error);
   }, []);
 
   const filteredDrawings = activeTab === 'All'
@@ -59,11 +44,6 @@ export default function Dashboard() {
 
   const maxEngCount = engineers.length ? Math.max(...engineers.map(e => e.count)) : 1;
 
-return (
-  <div>
-        {JSON.stringify(drawings)}
-  </div>
-);
   return (
     <Layout>
       <div className="p-8 max-w-7xl mx-auto space-y-6">
