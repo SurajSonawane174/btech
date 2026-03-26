@@ -3,7 +3,7 @@ const router = express.Router();
 const documentController = require("../controllers/documentController");
 const { isLoggedIn } = require("../middleware/auth");
 
-router.use(isLoggedIn); // Protect all document routes
+// router.use(isLoggedIn); // Protect all document routes
 
 
 // CREATE / GET Document
