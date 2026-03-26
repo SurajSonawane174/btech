@@ -100,12 +100,12 @@ module.exports.getCommentById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!id || isNaN(id)) {
+    if (!id) {
       return res.status(400).json({ message: "Invalid comment id" });
     }
 
     const result = await pool.query(
-      `SELECT * FROM get_comment_by_id($1::BIGINT)`,
+      `SELECT * FROM get_comment_by_id($1::VARCHAR)`,
       [id]
     );
 
