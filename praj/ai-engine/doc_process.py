@@ -12,6 +12,13 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+from dotenv import load_dotenv
+from pathlib import Path
+load_dotenv()
+
+# Load .env from project root
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+
 import fitz  # PyMuPDF
 import pandas as pd
 from PIL import Image
@@ -867,3 +874,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    print("DEBUG KEY:", os.getenv("GEMINI_API_KEY"))
