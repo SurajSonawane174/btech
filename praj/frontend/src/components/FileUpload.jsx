@@ -1,5 +1,4 @@
-import React, { useState, useRef } from 'react';
-import api from '../api/axios';
+import React, { useState, useRef, useMemo } from 'react';
 import { UploadCloud, FileText, Settings, X, Loader2 } from 'lucide-react';
 
 const DEFAULT_META = {
@@ -13,21 +12,29 @@ const DEFAULT_META = {
   drawingType: 'P&ID',
 };
 
-export default function FileUpload({ loading, setLoading, onProcess, onReset, onComplete }) {
-  const [files, setFiles]     = useState([]);
-  const [dragOver, setDragOver] = useState(false);
-  const [meta, setMeta]       = useState(DEFAULT_META); // FIX: controlled state
-  const fileInputRef          = useRef(null);
+export default function FileUpload({
+  loading = false,
+  setLoading = () => {},
+  onProcess,
+  onReset,
+  onComplete
+}) {
+  const [files, setFiles] = useState([]);
+  const [comments, setComments] = useState([]);
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("all");
 
-  const handleDragOver  = (e) => { e.preventDefault(); setDragOver(true); };
+  const [dragOver, setDragOver] = useState(false);
+  const [meta, setMeta] = useState(DEFAULT_META);
+  const fileInputRef = useRef(null);
+
+  const handleDragOver = (e) => { e.preventDefault(); setDragOver(true); };
   const handleDragLeave = (e) => { e.preventDefault(); setDragOver(false); };
 
   const handleDrop = (e) => {
     e.preventDefault();
     setDragOver(false);
-    const dropped = Array.from(e.dataTransfer.files).filter(
-      f => f.type === 'application/pdf' || f.type.startsWith('image/')
-    );
+    const dropped = Array.from(e.dataTransfer.files);
     setFiles(prev => [...prev, ...dropped]);
   };
 
@@ -40,160 +47,178 @@ export default function FileUpload({ loading, setLoading, onProcess, onReset, on
     onReset?.();
   };
 
-  const updateMeta = (key, value) => setMeta(prev => ({ ...prev, [key]: value }));
+  const updateMeta = (key, value) => {
+    setMeta(prev => ({ ...prev, [key]: value }));
+  };
 
+  // 🔥 FILTER + SEARCH
+  const filteredComments = useMemo(() => {
+    return comments.filter(c => {
+      const matchesSearch =
+        c.actual_extracted_comment?.toLowerCase().includes(search.toLowerCase());
+
+      const matchesFilter =
+        filterType === "all" || c.comment_category === filterType;
+
+      return matchesSearch && matchesFilter;
+    });
+  }, [comments, search, filterType]);
+
+  // 🔥 PROCESS
   const handleProcessDrawing = async () => {
-    if (!files.length) return alert("Please select a file first.");
+    if (!files.length) {
+      alert("Please select a file first.");
+      return;
+    }
 
     try {
       setLoading(true);
-
-      // Step 1: Upload the file
-      const formData = new FormData();
-      for (let file of files) formData.append("files", file);
-      await api.post("/api/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      // Step 2: Kick off the visual animation in parent (non-blocking)
       onProcess?.();
 
-      // Step 3: Trigger the AI scan
-      const scanResponse = await api.post("/api/scan");
+      const formData = new FormData();
+      files.forEach(file => formData.append("files", file));
+      formData.append("metadata", JSON.stringify(meta));
 
-      // Step 4: Pass results up
-      onComplete?.(scanResponse.data);
+      const response = await fetch("http://localhost:8080/api/drawings/process-drawing", {
+        method: "POST",
+        body: formData
+      });
+
+      const result = await response.json();
+
+      const extracted = result?.extractedComments || [];
+
+      setComments(extracted); // 🔥 store
+
+      onComplete?.(extracted);
 
     } catch (err) {
-      console.error("Processing failed:", err);
-      const msg = err.response?.data?.message || "Processing failed. Check server logs.";
-      alert(msg);
+      console.error(err);
+      alert("Processing failed");
+    } finally {
       setLoading(false);
     }
   };
 
-  const metaFields = [
-    { label: "DOC NUMBER",        key: "docNumber",        placeholder: "e.g. chait-001" },
-    { label: "REVISION",          key: "revision",         placeholder: "e.g. A" },
-    { label: "CUSTOMER DOC NO",   key: "customerDocNo",    placeholder: "CUST-001" },
-    { label: "CUSTOMER REVISION", key: "customerRevision", placeholder: "1" },
-    { label: "SUPPLIER NAME",     key: "supplierName",     placeholder: "ABC Engineering" },
-    { label: "SUPPLIER PO",       key: "supplierPo",       placeholder: "PO-7788" },
-    { label: "PAGE / SHEET",      key: "pageSheet",        placeholder: "1" },
-  ];
-
   return (
-    <div className="col-span-2 space-y-6">
+    <div className="space-y-6">
 
-      {/* Upload Box */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="bg-slate-50 p-4 border-b border-slate-100 flex items-center gap-2 font-bold text-slate-700">
-          <UploadCloud size={18} className="text-indigo-500" /> Upload Drawing
-        </div>
-        <div className="p-6">
-          <div
-            className={`border-2 border-dashed rounded-xl p-10 text-center flex flex-col items-center justify-center transition-all cursor-pointer min-h-[200px] ${
-              dragOver
-                ? 'border-indigo-500 bg-indigo-50'
-                : 'border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-purple-50/30 hover:bg-indigo-50/80'
-            }`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current.click()}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept=".pdf,.png,.jpg,.jpeg"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            {files.length > 0 ? (
-              <div className="w-full text-left space-y-3">
-                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">
-                  Selected Files ({files.length})
-                </h3>
-                {files.map((file, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between bg-white p-3 rounded-lg shadow-sm border border-slate-100"
-                    onClick={e => e.stopPropagation()}
-                  >
-                    <span className="text-sm font-medium text-slate-700 truncate mr-4">{file.name}</span>
-                    <button
-                      onClick={e => { e.stopPropagation(); removeFile(index); }}
-                      className="text-slate-400 hover:text-rose-500 transition-colors"
-                    >
-                      <X size={18} />
-                    </button>
-                  </div>
-                ))}
-                <p className="text-xs text-center text-slate-400 mt-4 font-medium">
-                  Click or drag more files to add
-                </p>
+      {/* Upload */}
+      <div className="bg-white p-6 rounded-xl border">
+        <div
+          className="border-2 border-dashed p-8 text-center cursor-pointer"
+          onClick={() => fileInputRef.current.click()}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={handleFileSelect}
+          />
+
+          {files.length === 0 ? (
+            <p>Upload PDF</p>
+          ) : (
+            files.map((f, i) => (
+              <div key={i} className="flex justify-between">
+                <span>{f.name}</span>
+                <X onClick={() => removeFile(i)} />
               </div>
-            ) : (
-              <>
-                <FileText size={40} className="text-indigo-300 mb-4" />
-                <h3 className="text-lg font-bold text-slate-700 mb-1">Drop your PDF here</h3>
-                <p className="text-sm text-slate-500">or click to browse — PDF, PNG, JPG supported</p>
-              </>
-            )}
-          </div>
+            ))
+          )}
         </div>
       </div>
 
-      {/* Metadata Form — now controlled */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="bg-slate-50 p-4 border-b border-slate-100 flex items-center gap-2 font-bold text-slate-700">
-          <FileText size={18} className="text-emerald-500" /> Drawing Metadata
-        </div>
-        <div className="p-6 grid grid-cols-2 gap-5">
-          {metaFields.map((field) => (
-            <div key={field.key}>
-              <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
-                {field.label}
-              </label>
-              <input
-                type="text"
-                value={meta[field.key]}
-                onChange={e => updateMeta(field.key, e.target.value)}
-                placeholder={field.placeholder}
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-              />
-            </div>
-          ))}
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">
-              DRAWING TYPE
-            </label>
-            <select
-              value={meta.drawingType}
-              onChange={e => updateMeta('drawingType', e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none transition-all"
-            >
-              <option>P&ID</option>
-              <option>Isometric</option>
-              <option>Structural</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Action Button */}
+      {/* Button */}
       <button
         onClick={handleProcessDrawing}
-        disabled={loading || !files.length}
-        className="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl shadow-lg shadow-indigo-200 flex justify-center items-center gap-2 transition-all"
+        disabled={loading}
+        className="bg-indigo-600 text-white px-4 py-2 rounded"
       >
-        {loading ? (
-          <><Loader2 size={20} className="animate-spin" /> Processing Documents...</>
-        ) : (
-          <><Settings size={20} /> Process Drawing</>
-        )}
+        {loading ? "Processing..." : "Process Drawing"}
       </button>
+
+      {/* 🔍 SEARCH + FILTER */}
+      {comments.length > 0 && (
+        <div className="bg-white p-4 rounded-xl border space-y-3">
+
+          <div className="flex gap-3">
+            <input
+              type="text"
+              placeholder="Search comments..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="border px-3 py-2 rounded w-full"
+            />
+
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="border px-3 py-2 rounded"
+            >
+              <option value="all">All</option>
+              <option value="technical">Technical</option>
+              <option value="aesthetic">Aesthetic</option>
+              <option value="repeated">Repeated</option>
+            </select>
+          </div>
+
+          {/* 📊 TABLE */}
+          <div className="overflow-auto max-h-[400px]">
+            <table className="w-full border text-sm">
+              <thead className="bg-slate-100 sticky top-0">
+                <tr>
+                  <th className="p-2 border">#</th>
+                  <th className="p-2 border">Comment</th>
+                  <th className="p-2 border">Page</th>
+                  <th className="p-2 border">Type</th>
+                  <th className="p-2 border">By</th>
+                  <th className="p-2 border">Snapshot</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredComments.map((c, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="p-2 border">{i + 1}</td>
+
+                    <td className="p-2 border">
+                      {c.actual_extracted_comment}
+                    </td>
+
+                    <td className="p-2 border">{c.page_sheet}</td>
+
+                    <td className="p-2 border capitalize">
+                      {c.comment_category}
+                    </td>
+
+                    <td className="p-2 border">
+                      {c.name_of_person_commented}
+                    </td>
+
+                    {/* 🖼 IMAGE */}
+                    <td className="p-2 border">
+                      {c.snapshot_file ? (
+                        <img
+                          src={`http://localhost:8080/${c.snapshot_file}`}
+                          alt="snapshot"
+                          className="w-20 h-20 object-cover rounded cursor-pointer"
+                          onClick={() =>
+                            window.open(`http://localhost:8080/${c.snapshot_file}`)
+                          }
+                        />
+                      ) : (
+                        "N/A"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

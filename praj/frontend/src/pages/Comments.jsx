@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
-import api from '../api/axios';
 import { Search, Folder } from 'lucide-react';
+
+// Add your backend base URL here
+const BASE_URL = 'http://localhost:8080';
 
 export default function Comments() {
   const navigate = useNavigate();
@@ -13,8 +15,6 @@ export default function Comments() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // Expected API response: { drawings: [{ id, doc, sup, po, tot, opn, cls, status }], total: number }
-
   useEffect(() => {
     fetchDrawings('All');
   }, []);
@@ -22,12 +22,54 @@ export default function Comments() {
   async function fetchDrawings(sts, dNo = drawingNo, sup = supplier) {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ drawingNo: dNo, supplier: sup, status: sts });
-      const res = await api.get(`/api/drawings?${params.toString()}`);
-      const data = res.data;
-      setDrawings(data.drawings);
-      setTotal(data.total);
-      console.log(res.data);
+      // Build search parameters safely
+      const params = new URLSearchParams();
+      if (dNo) params.append('drawingNo', dNo);
+      if (sup) params.append('supplier', sup);
+      if (sts && sts !== 'All') params.append('status', sts);
+
+      // Fetch with CORS
+      const res = await fetch(`${BASE_URL}/api/documents?${params.toString()}`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to fetch: ${res.status}`);
+      }
+
+      const data = await res.json();
+      console.log("RAW BACKEND DATA:", data);
+
+      // Handle the data depending on how your backend sends it
+      let mappedDrawings = [];
+      let totalCount = 0;
+
+      // If backend sends an array directly (like we saw previously)
+      if (Array.isArray(data)) {
+        mappedDrawings = data.map(doc => ({
+          id: doc.praj_document_number || doc.id,
+          doc: doc.customer_document_number || '-',
+          sup: doc.supplier_name || '-',
+          po: doc.supplier_po_number || '-',
+          tot: doc.total_comments || 0, // Fallback if backend doesn't have these yet
+          opn: doc.open_comments || 0,
+          cls: doc.closed_comments || 0,
+          status: doc.status || 'Open'
+        }));
+        totalCount = mappedDrawings.length;
+      } 
+      // If backend sends the { drawings: [], total: 0 } object format
+      else if (data && data.drawings) {
+        mappedDrawings = data.drawings;
+        totalCount = data.total || data.drawings.length;
+      }
+
+      setDrawings(mappedDrawings);
+      setTotal(totalCount);
       
     } catch (err) {
       console.error('Failed to fetch drawings:', err);

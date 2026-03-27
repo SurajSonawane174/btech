@@ -1,0 +1,8 @@
+{
+  "ignore": [
+    "output/*",
+    "uploads/*",
+    "../ai-engine/output/*",
+    "../ai-engine/*"
+  ]
+}
