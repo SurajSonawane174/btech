@@ -95,11 +95,11 @@ export default function Sidebar({ isOpen }) {
           <div>
             <p className="text-[10px] font-bold text-cyan-500/80 tracking-widest uppercase mb-3 px-3">Review</p>
             <ul className="space-y-1.5">
-              {/* <li>
+              <li>
                 <NavLink to="/get-crs" className={navItemStyles}>
                   <div className="flex items-center gap-3"><SearchCode size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">CRS Lookup</span></div>
                 </NavLink>
-              </li> */}
+              </li>
               <li>
                 <NavLink to="/review" className={navItemStyles}>
                   <div className="flex items-center gap-3"><CheckSquare size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">CRS Review</span></div>
