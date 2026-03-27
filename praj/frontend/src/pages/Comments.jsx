@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
-import api from '../api/axios';
-import { Search, Folder } from 'lucide-react';
+import { Search, Folder, Upload } from 'lucide-react';
+
+// Add your backend base URL here
+const BASE_URL = 'http://localhost:8080';
 
 export default function Comments() {
   const navigate = useNavigate();
@@ -13,36 +15,68 @@ export default function Comments() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // Expected API response: { drawings: [{ id, doc, sup, po, tot, opn, cls, status }], total: number }
-
   useEffect(() => {
     fetchDrawings('All');
   }, []);
 
   async function fetchDrawings(sts, dNo = drawingNo, sup = supplier) {
-  setLoading(true);
-  try {
-    const params = new URLSearchParams({
-      drawingNo: dNo,
-      supplier: sup,
-      status: sts
-    });
+    setLoading(true);
+    try {
+      // Build search parameters safely
+      const params = new URLSearchParams();
+      if (dNo) params.append('drawingNo', dNo);
+      if (sup) params.append('supplier', sup);
+      if (sts && sts !== 'All') params.append('status', sts);
 
-    const res = await fetch(`http://localhost:8080/api/drawings?${params}`, {
-      credentials: "include"
-    });
+      // Fetch with CORS
+      const res = await fetch(`${BASE_URL}/api/documents?${params.toString()}`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
 
-    const data = await res.json();
+      if (!res.ok) {
+        throw new Error(`Failed to fetch: ${res.status}`);
+      }
 
-    setDrawings(data.drawings);
-    setTotal(data.total);
+      const data = await res.json();
+      console.log("RAW BACKEND DATA:", data);
 
-  } catch (err) {
-    console.error(err);
-  } finally {
-    setLoading(false);
+      // Handle the data depending on how your backend sends it
+      let mappedDrawings = [];
+      let totalCount = 0;
+
+      // If backend sends an array directly (like we saw previously)
+      if (Array.isArray(data)) {
+        mappedDrawings = data.map(doc => ({
+          id: doc.praj_document_number || doc.id,
+          doc: doc.customer_document_number || '-',
+          sup: doc.supplier_name || '-',
+          po: doc.supplier_po_number || '-',
+          tot: doc.total_comments || 0, // Fallback if backend doesn't have these yet
+          opn: doc.open_comments || 0,
+          cls: doc.closed_comments || 0,
+          status: doc.status || 'Open'
+        }));
+        totalCount = mappedDrawings.length;
+      } 
+      // If backend sends the { drawings: [], total: 0 } object format
+      else if (data && data.drawings) {
+        mappedDrawings = data.drawings;
+        totalCount = data.total || data.drawings.length;
+      }
+
+      setDrawings(mappedDrawings);
+      setTotal(totalCount);
+      
+    } catch (err) {
+      console.error('Failed to fetch drawings:', err);
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
   function handleStatusChange(value) {
     setStatus(value);
@@ -62,9 +96,16 @@ export default function Comments() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Page Header */}
-        <div>
+        <div className="flex gap-10">
           <h1 className="text-2xl font-bold text-slate-800">Drawing List</h1>
-          <p className="text-sm text-slate-500">All submitted engineering drawings and their processing status</p>
+          {/* <p className="text-sm text-slate-500">All submitted engineering drawings and their processing status</p> */}
+
+          <button
+            onClick={() => navigate('/upload')}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"
+          >
+            <Upload size={16} /> Upload New
+          </button>
         </div>
 
         {/* Search & Filter Bar */}

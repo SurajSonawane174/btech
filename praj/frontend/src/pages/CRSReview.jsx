@@ -1,53 +1,109 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import Layout from '../components/Layout';
-import api from '../api/axios';
-import { FileText, Download, FileSpreadsheet, Image as ImageIcon, Calendar } from 'lucide-react';
+import { FileText, Download, FileSpreadsheet, Image as ImageIcon, Calendar, Search, Filter } from 'lucide-react';
+
+const BASE_URL = 'http://localhost:8080';
 
 export default function CRSReview() {
   const { drawingNo } = useParams();
 
   const [metadata, setMetadata] = useState(null);
-  const [tableData, setTableData] = useState([]);
+  const [allTableData, setAllTableData] = useState([]); // Master list of comments
+  const [tableData, setTableData] = useState([]);       // Filtered list shown on screen
   const [engineers, setEngineers] = useState([]);
-  // Track per-row unsaved edits: { [index]: { assignee, target, resolution, status, evidence } }
+  
+  // Tracking edits by comment ID (cId) so filtering doesn't scramble unsaved changes
   const [rowEdits, setRowEdits] = useState({});
 
-  // Expected metadata shape: { docNo, revision, custDocNo, custRevision, supplier, po }
-  // Expected tableData item shape: { sr, doc, rev, cDoc, cRev, page, cId, comment, snapshotUrl,
-  //   person, date, color, client, cat, hw, conf, assignee, target, crs, res, status, ev }
-  // Expected engineers: [{ id, name }]
+  // Filter States
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState('All');
 
   useEffect(() => {
-  const id = drawingNo || "PRAJ-001";
+    const id = drawingNo || '1'; 
 
-  const fetchData = async () => {
-    try {
-      const [meta, comments, engineers] = await Promise.all([
-        fetch(`http://localhost:8080/api/crs/drawing/${id}/metadata`, { credentials: "include" }).then(r => r.json()),
-        fetch(`http://localhost:8080/api/crs/drawing/${id}/comments`, { credentials: "include" }).then(r => r.json()),
-        fetch("http://localhost:8080/api/engineers", { credentials: "include" }).then(r => r.json())
-      ]);
+    // 1. Fetch Comments
+    fetch(`${BASE_URL}/api/comments/document/${id}`, { mode: 'cors' })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to fetch comments");
+        return res.json();
+      })
+      .then(data => {
+        const mappedComments = data.map((item, index) => ({
+          sr: index + 1,
+          doc: item.document_id || id,
+          rev: "-",
+          cDoc: "-",
+          cRev: "-",
+          page: item.page_sheet,
+          cId: item.comment_id || `C-${index+1}`,
+          comment: item.actual_extracted_comment || "-",
+          snapshotUrl: item.snapshot_file,
+          person: item.name_of_person_commented || "Unknown",
+          date: (item.comment_datetime || item.created_at) 
+                  ? new Date(item.comment_datetime || item.created_at).toLocaleDateString() 
+                  : "-",
+          color: item.comment_color || "Black",
+          client: item.is_client_comment ? "Yes" : "No",
+          cat: item.comment_category || "General",
+          hw: item.is_handwritten ? "Yes" : "No",
+          conf: item.extraction_confidence_percent ? `${item.extraction_confidence_percent}%` : "100%",
+          assignee: item.assignee || "",
+          target: item.target || "",
+          crs: item.crs_ref || "-",
+          res: item.resolution || "",
+          status: item.status || "Open",
+          ev: item.evidence || ""
+        }));
+        
+        setAllTableData(mappedComments); // Save to master
+      })
+      .catch(err => console.error("Error fetching comments:", err));
 
-      setMetadata(meta);
-      setTableData(comments);
-      setEngineers(engineers);
+    // 2. Fetch Metadata
+    fetch(`${BASE_URL}/api/crs/drawing/${id}/metadata`, { mode: 'cors' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data) setMetadata(data); })
+      .catch(err => console.error("Error fetching metadata:", err));
 
-    } catch (err) {
-      console.error(err);
+    // 3. Fetch Engineers
+    fetch(`${BASE_URL}/api/engineers`, { mode: 'cors' })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setEngineers(data))
+      .catch(err => console.error("Error fetching engineers:", err));
+      
+  }, [drawingNo]);
+
+  // Handle Filtering (Runs whenever search, status, or raw data changes)
+  useEffect(() => {
+    let filtered = allTableData;
+
+    if (searchTerm.trim() !== '') {
+      const lowerSearch = searchTerm.toLowerCase();
+      filtered = filtered.filter(row => 
+        row.comment.toLowerCase().includes(lowerSearch) || 
+        row.person.toLowerCase().includes(lowerSearch) ||
+        row.cId.toLowerCase().includes(lowerSearch) ||
+        row.cat.toLowerCase().includes(lowerSearch)
+      );
     }
-  };
 
-  fetchData();
-}, [drawingNo]);
+    if (filterStatus !== 'All') {
+      filtered = filtered.filter(row => row.status === filterStatus);
+    }
 
-  function setField(rowIndex, field, value) {
-    setRowEdits(prev => ({ ...prev, [rowIndex]: { ...prev[rowIndex], [field]: value } }));
+    setTableData(filtered);
+  }, [searchTerm, filterStatus, allTableData]);
+
+  // Edits are now tracked by rowId instead of index
+  function setField(rowId, field, value) {
+    setRowEdits(prev => ({ ...prev, [rowId]: { ...prev[rowId], [field]: value } }));
   }
 
-  async function handleSave(rowIndex) {
-    const row = tableData[rowIndex];
-    const edits = rowEdits[rowIndex] || {};
+  async function handleSave(row) {
+    const edits = rowEdits[row.cId] || {};
+    
     const payload = {
       commentId: row.cId,
       assignee:   edits.assignee   ?? row.assignee,
@@ -56,45 +112,54 @@ export default function CRSReview() {
       status:     edits.status     ?? row.status,
       evidence:   edits.evidence   ?? row.ev,
     };
+    
     try {
-     await fetch(`http://localhost:8080/api/crs/drawing/${drawingNo}/comments/${row.cId}`, {
-  method: "PATCH",
-  credentials: "include",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(payload)
-});
-      setTableData(prev => prev.map((r, i) => i === rowIndex ? { ...r, ...payload, res: payload.resolution, ev: payload.evidence } : r));
-      setRowEdits(prev => { const n = { ...prev }; delete n[rowIndex]; return n; });
+      const res = await fetch(`${BASE_URL}/api/crs/drawing/${drawingNo}/comments/${row.cId}`, {
+        method: 'PATCH',
+        mode: 'cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error("Failed to save");
+
+      // Update the Master Data (Filtering auto-updates the UI)
+      setAllTableData(prev => prev.map(r => r.cId === row.cId ? { ...r, ...payload, res: payload.resolution, ev: payload.evidence } : r));
+      
+      // Clear the unsaved edits for this specific row
+      setRowEdits(prev => { const n = { ...prev }; delete n[row.cId]; return n; });
     } catch (err) {
       console.error('Save failed:', err);
+      alert("Failed to save changes. Check console for details.");
     }
   }
 
   async function handleDownload(format) {
     try {
-      const res = await fetch(`http://localhost:8080/api/crs/drawing/${drawingNo}/export/${format}`, {
-  credentials: "include"
-});
-const blob = await res.blob();
-      
+      const res = await fetch(`${BASE_URL}/api/crs/drawing/${drawingNo}/export/${format}`, { mode: 'cors' });
+      if (!res.ok) throw new Error("Download failed");
+
+      const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${drawingNo}-crs.${format === 'excel' ? 'xlsx' : 'pdf'}`;
+      a.download = `Document-${drawingNo}-crs.${format === 'excel' ? 'xlsx' : 'pdf'}`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Download failed:', err);
+      alert(`Failed to download ${format.toUpperCase()}.`);
     }
   }
 
   const getCategoryColor = (cat) => {
-    switch (cat) {
-      case 'Safety':      return 'text-red-600 bg-red-50 border-red-100';
-      case 'Design':      return 'text-blue-600 bg-blue-50 border-blue-100';
-      case 'Maintenance': return 'text-emerald-600 bg-emerald-50 border-emerald-100';
-      case 'Labeling':    return 'text-amber-600 bg-amber-50 border-amber-100';
-      case 'Specs':       return 'text-teal-600 bg-teal-50 border-teal-100';
+    switch (cat?.toLowerCase()) {
+      case 'safety':      return 'text-red-600 bg-red-50 border-red-100';
+      case 'design':      return 'text-blue-600 bg-blue-50 border-blue-100';
+      case 'maintenance': return 'text-emerald-600 bg-emerald-50 border-emerald-100';
+      case 'labeling':    return 'text-amber-600 bg-amber-50 border-amber-100';
+      case 'specs':       return 'text-teal-600 bg-teal-50 border-teal-100';
+      case 'technical':   return 'text-indigo-600 bg-indigo-50 border-indigo-100';
       default:            return 'text-slate-600 bg-slate-50 border-slate-100';
     }
   };
@@ -146,15 +211,44 @@ const blob = await res.blob();
 
         {/* Resolution Grid Table Container */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          
+          {/* Top Bar with Title and Filters */}
+          <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between bg-slate-50/50 gap-4">
             <div className="flex items-center gap-3">
               <FileText size={18} className="text-rose-400" />
               <h3 className="font-bold text-slate-800">Resolution Grid</h3>
               <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold">{tableData.length} comments</span>
             </div>
-            <Link to="/get-crs" className="text-sm text-indigo-600 hover:text-indigo-800 transition-colors">
-              ← Back to Lookup
-            </Link>
+            
+            {/* Filter Controls */}
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search comments..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-8 pr-4 py-1.5 border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow w-64"
+                />
+              </div>
+              <div className="relative">
+                <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className="pl-8 pr-4 py-1.5 border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500 appearance-none bg-white cursor-pointer"
+                >
+                  <option value="All">All Statuses</option>
+                  <option value="Open">Open</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Closed">Closed</option>
+                </select>
+              </div>
+              <Link to="/get-crs" className="text-sm text-indigo-600 hover:text-indigo-800 transition-colors ml-4 font-medium">
+                ← Back
+              </Link>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -188,11 +282,11 @@ const blob = await res.blob();
               </thead>
               <tbody className="text-sm text-slate-600">
                 {tableData.length === 0 ? (
-                  <tr><td colSpan={23} className="p-8 text-center text-slate-400 text-sm">Loading comments...</td></tr>
+                  <tr><td colSpan={23} className="p-8 text-center text-slate-400 text-sm">No comments match your filter.</td></tr>
                 ) : tableData.map((row, i) => {
-                  const edits = rowEdits[i] || {};
+                  const edits = rowEdits[row.cId] || {}; // Uses row.cId instead of map index (i)
                   return (
-                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    <tr key={row.cId} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="p-4 text-slate-500">{row.sr}</td>
                       <td className="p-4 font-bold text-red-500">{row.doc}</td>
                       <td className="p-4">{row.rev}</td>
@@ -224,9 +318,10 @@ const blob = await res.blob();
                       <td className="p-4">
                         <select
                           value={edits.assignee ?? row.assignee}
-                          onChange={e => setField(i, 'assignee', e.target.value)}
+                          onChange={e => setField(row.cId, 'assignee', e.target.value)}
                           className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
                         >
+                          <option value="">Select...</option>
                           {engineers.map(eng => <option key={eng.id} value={eng.name}>{eng.name}</option>)}
                         </select>
                       </td>
@@ -234,7 +329,7 @@ const blob = await res.blob();
                         <input
                           type="text"
                           value={edits.target ?? row.target}
-                          onChange={e => setField(i, 'target', e.target.value)}
+                          onChange={e => setField(row.cId, 'target', e.target.value)}
                           className="w-[110px] bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md pl-2 pr-7 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
                         />
                         <Calendar size={12} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
@@ -244,14 +339,14 @@ const blob = await res.blob();
                         <input
                           type="text"
                           value={edits.resolution ?? row.res}
-                          onChange={e => setField(i, 'resolution', e.target.value)}
+                          onChange={e => setField(row.cId, 'resolution', e.target.value)}
                           className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
                         />
                       </td>
                       <td className="p-4">
                         <select
                           value={edits.status ?? row.status}
-                          onChange={e => setField(i, 'status', e.target.value)}
+                          onChange={e => setField(row.cId, 'status', e.target.value)}
                           className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
                         >
                           <option>Open</option>
@@ -263,13 +358,13 @@ const blob = await res.blob();
                         <input
                           type="text"
                           value={edits.evidence ?? row.ev}
-                          onChange={e => setField(i, 'evidence', e.target.value)}
+                          onChange={e => setField(row.cId, 'evidence', e.target.value)}
                           className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
                         />
                       </td>
                       <td className="p-4 text-center">
                         <button
-                          onClick={() => handleSave(i)}
+                          onClick={() => handleSave(row)}
                           className="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm"
                         >
                           Save
@@ -283,7 +378,7 @@ const blob = await res.blob();
           </div>
 
           <div className="p-4 border-t border-slate-200/60 flex justify-between items-center text-sm text-slate-500 bg-white">
-            <span>Showing {tableData.length} comments</span>
+            <span>Showing {tableData.length} of {allTableData.length} total comments</span>
             <div className="flex gap-1">
               <button className="w-8 h-8 flex items-center justify-center rounded-md bg-indigo-500 text-white font-bold shadow-sm">1</button>
               <button className="w-8 h-8 flex items-center justify-center rounded-md bg-white border border-slate-200 hover:bg-slate-50 font-medium text-slate-600">2</button>

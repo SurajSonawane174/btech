@@ -79,15 +79,15 @@ export default function Sidebar({ isOpen }) {
               </li>
               <li>
                 <NavLink to="/comments" className={navItemStyles}>
-                  <div className="flex items-center gap-3"><MessageSquare size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">Comment Collector</span></div>
-                  <span className="bg-cyan-500/20 border border-cyan-500/30 text-[10px] px-2 py-0.5 rounded-full text-cyan-300 font-semibold shadow-[0_0_8px_rgba(6,182,212,0.2)]">125</span>
+                  <div className="flex items-center gap-3"><MessageSquare size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">Comment Extractor Lookup</span></div>
+                  {/* <span className="bg-cyan-500/20 border border-cyan-500/30 text-[10px] px-2 py-0.5 rounded-full text-cyan-300 font-semibold shadow-[0_0_8px_rgba(6,182,212,0.2)]">125</span> */}
                 </NavLink>
               </li>
-              <li>
+              {/* <li>
                 <NavLink to="/upload" className={navItemStyles}>
                   <div className="flex items-center gap-3"><FileText size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">Process Drawing</span></div>
                 </NavLink>
-              </li>
+              </li> */}
             </ul>
           </div>
 
@@ -95,15 +95,15 @@ export default function Sidebar({ isOpen }) {
           <div>
             <p className="text-[10px] font-bold text-cyan-500/80 tracking-widest uppercase mb-3 px-3">Review</p>
             <ul className="space-y-1.5">
-              <li>
+              {/* <li>
                 <NavLink to="/get-crs" className={navItemStyles}>
                   <div className="flex items-center gap-3"><SearchCode size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">CRS Lookup</span></div>
                 </NavLink>
-              </li>
+              </li> */}
               <li>
                 <NavLink to="/review" className={navItemStyles}>
                   <div className="flex items-center gap-3"><CheckSquare size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">CRS Review</span></div>
-                  <span className="bg-rose-500/20 border border-rose-500/30 text-[10px] px-2 py-0.5 rounded-full text-yellow-500 font-bold shadow-[0_0_8px_rgba(244,63,94,0.3)]">13</span>
+                  {/* <span className="bg-rose-500/20 border border-rose-500/30 text-[10px] px-2 py-0.5 rounded-full text-yellow-500 font-bold shadow-[0_0_8px_rgba(244,63,94,0.3)]">13</span> */}
                 </NavLink>
               </li>
             </ul>

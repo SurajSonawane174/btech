@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
-import api from '../api/axios';
 import { AlertTriangle, ChevronRight, Folder, MessageCircle, Hourglass, ShieldAlert, FileText } from 'lucide-react';
 
 const TABS = ['All', 'Open', 'In Progress', 'Closed'];
@@ -10,46 +9,80 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('All');
 
-  const [stats, setStats]         = useState(null);
-  const [drawings, setDrawings]   = useState([]);
+  const [stats, setStats] = useState(null);
+  const [drawings, setDrawings] = useState([]);
   const [crsStatus, setCrsStatus] = useState(null);
   const [categories, setCategories] = useState([]);
   const [engineers, setEngineers] = useState([]);
 
   useEffect(() => {
-  const fetchData = async () => {
-    try {
-      const [stats, drawings, crs, categories, engineers] = await Promise.all([
-        fetch("http://localhost:8080/api/dashboard/stats", { credentials: "include" }).then(r => r.json()),
-        fetch("http://localhost:8080/api/dashboard/recent-drawings", { credentials: "include" }).then(r => r.json()),
-        fetch("http://localhost:8080/api/dashboard/crs-status", { credentials: "include" }).then(r => r.json()),
-        fetch("http://localhost:8080/api/dashboard/categories", { credentials: "include" }).then(r => r.json()),
-        fetch("http://localhost:8080/api/dashboard/engineer-workload", { credentials: "include" }).then(r => r.json()),
-      ]);
+    // Helper function using your exact fetch pattern
+    const fetchDashboardData = (url, setterFunc, label) => {
+      fetch(url)
+        .then(async (res) => {
+          console.log(`${label} STATUS:`, res.status);
 
-      setStats(stats);
-      setDrawings(drawings);
-      setCrsStatus(crs);
-      setCategories(categories);
-      setEngineers(engineers);
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text);
+          }
 
-    } catch (err) {
-      console.error(err);
-    }
-  };
+          return res.json();
+        })
+        .then(data => {
+          console.log(`${label} DATA:`, data);
+          setterFunc(data);
+        })
+        .catch(err => console.error(`${label} FETCH ERROR:`, err));
+    };
 
-  fetchData();
-}, []);
+    const BASE_URL = 'http://localhost:8080';
+
+    // 1. Fetch Drawings and map the new API fields to match the frontend expectations
+    fetch(`${BASE_URL}/api/documents`)
+      .then(async (res) => {
+        console.log("DRAWINGS STATUS:", res.status);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text);
+        }
+        return res.json();
+      })
+      .then(data => {
+        console.log("DRAWINGS RAW DATA:", data);
+        
+        // Translate the new backend schema to the old frontend schema
+        const mappedData = data.map(doc => ({
+          id: doc.praj_document_number,   // Maps to DRAWING NO
+          sup: doc.supplier_name,         // Maps to SUPPLIER
+          po: doc.supplier_po_number,     // Maps to PO
+          com: doc.comments || '-',       // Missing from API, adding fallback
+          status: doc.status || 'Open',   // Missing from API, falling back to 'Open' so tabs work
+          dbId: doc.id                    // Saving the actual database ID just in case
+        }));
+
+        setDrawings(mappedData);
+      })
+      .catch(err => console.error("DRAWINGS FETCH ERROR:", err));
+
+    // 2. Fetch all other endpoints normally
+    fetchDashboardData(`${BASE_URL}/api/dashboard/stats`, setStats, 'STATS');
+    fetchDashboardData(`${BASE_URL}/api/dashboard/crs-status`, setCrsStatus, 'CRS_STATUS');
+    fetchDashboardData(`${BASE_URL}/api/dashboard/categories`, setCategories, 'CATEGORIES');
+    fetchDashboardData(`${BASE_URL}/api/dashboard/engineer-workload`, setEngineers, 'ENGINEERS');
+
+  }, []);
 
   const filteredDrawings = activeTab === 'All'
     ? drawings
     : drawings.filter(d => d.status === activeTab);
 
+  // stats cards config
   const statCards = stats ? [
-    { title: "TOTAL DRAWINGS",     count: stats.totalDrawings,     trend: stats.totalDrawingsTrend,     icon: Folder,        color: "text-indigo-600", bg: "bg-indigo-50", line: "bg-indigo-500" },
+    { title: "TOTAL DRAWINGS",     count: stats.totalDrawings,     trend: stats.totalDrawingsTrend,     icon: Folder,      color: "text-indigo-600", bg: "bg-indigo-50", line: "bg-indigo-500" },
     { title: "COMMENTS EXTRACTED", count: stats.commentsExtracted, trend: stats.commentsExtractedTrend, icon: MessageCircle, color: "text-emerald-600", bg: "bg-emerald-50", line: "bg-emerald-500" },
-    { title: "PENDING REVIEWS",    count: stats.pendingReviews,    trend: stats.pendingReviewsTrend,    icon: Hourglass,     color: "text-amber-600",  bg: "bg-amber-50",  line: "bg-amber-500" },
-    { title: "OVERDUE ITEMS",      count: stats.overdueItems,      trend: stats.overdueItemsTrend,      icon: ShieldAlert,   color: "text-red-600",    bg: "bg-red-50",    line: "bg-red-500", trendColor: "text-red-500" },
+    { title: "PENDING REVIEWS",    count: stats.pendingReviews,    trend: stats.pendingReviewsTrend,    icon: Hourglass,   color: "text-amber-600",  bg: "bg-amber-50",  line: "bg-amber-500" },
+    { title: "OVERDUE ITEMS",      count: stats.overdueItems,      trend: stats.overdueItemsTrend,      icon: ShieldAlert, color: "text-red-600",    bg: "bg-red-50",    line: "bg-red-500", trendColor: "text-red-500" },
   ] : [];
 
   const maxEngCount = engineers.length ? Math.max(...engineers.map(e => e.count)) : 1;
@@ -73,16 +106,7 @@ export default function Dashboard() {
 
         {/* Stats Grid */}
         <div className="grid grid-cols-4 gap-4">
-          {statCards.length === 0 ? (
-            // Loading skeleton
-            Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm animate-pulse">
-                <div className="h-3 bg-slate-100 rounded w-2/3 mb-4"></div>
-                <div className="h-8 bg-slate-100 rounded w-1/2 mb-2"></div>
-                <div className="h-2 bg-slate-100 rounded w-1/3"></div>
-              </div>
-            ))
-          ) : statCards.map((stat, i) => (
+          {statCards.map((stat, i) => (
             <div key={i} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
               <div className={`absolute top-0 left-0 w-full h-1 ${stat.line}`}></div>
               <div className="flex justify-between items-start mb-4">
@@ -90,25 +114,21 @@ export default function Dashboard() {
                 <div className={`p-2 rounded-lg ${stat.bg} ${stat.color}`}><stat.icon size={16} /></div>
               </div>
               <h3 className="text-3xl font-bold text-slate-800 mb-1">{stat.count}</h3>
-              <p className={`text-xs ${stat.trendColor || 'text-emerald-500'} flex items-center gap-1 font-medium`}>
-                {stat.trend}
-              </p>
+              <p className={`text-xs ${stat.trendColor || 'text-emerald-500'} flex items-center gap-1 font-medium`}>↑ {stat.trend}</p>
             </div>
           ))}
         </div>
 
-        {/* Main Content Grid */}
+        {/* Main Content Grid (Table + Charts) */}
         <div className="grid grid-cols-3 gap-6">
 
-          {/* Left Column — Drawings Table */}
+          {/* Left Column (Table) */}
           <div className="col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <FileText size={18} className="text-slate-400" />
                 <h3 className="font-semibold text-slate-800">Recent Drawings</h3>
-                <span className="bg-indigo-50 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full font-semibold">
-                  {filteredDrawings.length} shown
-                </span>
+                <span className="bg-indigo-50 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full font-semibold">{filteredDrawings.length} shown</span>
               </div>
               <button onClick={() => navigate('/comments')} className="text-xs text-indigo-600 font-medium hover:text-indigo-800">
                 View All →
@@ -121,11 +141,7 @@ export default function Dashboard() {
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`py-3 transition-colors ${
-                    activeTab === tab
-                      ? 'text-indigo-600 border-b-2 border-indigo-600 font-medium'
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
+                  className={`py-3 transition-colors ${activeTab === tab ? 'text-indigo-600 border-b-2 border-indigo-600 font-medium' : 'text-slate-500 hover:text-slate-800'}`}
                 >
                   {tab}
                 </button>
@@ -145,31 +161,20 @@ export default function Dashboard() {
               </thead>
               <tbody className="text-sm">
                 {filteredDrawings.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="p-6 text-center text-slate-400 text-xs">
-                      {drawings.length === 0 ? 'No drawings uploaded yet.' : 'No drawings match this status.'}
-                    </td>
-                  </tr>
+                  <tr><td colSpan={5} className="p-6 text-center text-slate-400 text-xs">No drawings found for this status.</td></tr>
                 ) : filteredDrawings.map((row, i) => (
-                  <tr
-                    key={i}
-                    className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer"
-                    onClick={() => navigate(`/crs-review/${row.id}`)}
-                  >
+                  <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer" onClick={() => navigate(`/crs-review/${row.id}`)}>
                     <td className="p-4 text-indigo-600 font-medium">{row.id}</td>
                     <td className="p-4 text-slate-600">{row.sup}</td>
                     <td className="p-4 text-slate-600">{row.po}</td>
                     <td className="p-4 text-slate-800 font-medium">{row.com}</td>
                     <td className="p-4">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
-                        row.status === 'Open'        ? 'bg-red-50 text-red-600 border-red-100' :
+                        row.status === 'Open' ? 'bg-red-50 text-red-600 border-red-100' :
                         row.status === 'In Progress' ? 'bg-amber-50 text-amber-600 border-amber-100' :
-                                                       'bg-emerald-50 text-emerald-600 border-emerald-100'
+                        'bg-emerald-50 text-emerald-600 border-emerald-100'
                       }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${
-                          row.status === 'Open'        ? 'bg-red-500' :
-                          row.status === 'In Progress' ? 'bg-amber-500' : 'bg-emerald-500'
-                        }`}></span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${row.status === 'Open' ? 'bg-red-500' : row.status === 'In Progress' ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
                         {row.status}
                       </span>
                     </td>
@@ -179,15 +184,14 @@ export default function Dashboard() {
             </table>
           </div>
 
-          {/* Right Column — Charts */}
+          {/* Right Column (Charts) */}
           <div className="space-y-6">
-
             {/* CRS Status */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
               <h3 className="font-semibold text-slate-800 flex items-center gap-2 mb-6">
                 <span className="w-3 h-3 rounded-full bg-amber-700"></span> CRS Status
               </h3>
-              {crsStatus ? (
+              {crsStatus && (
                 <div className="flex items-center justify-center gap-6">
                   <div className="relative w-32 h-32 rounded-full border-[12px] border-emerald-500 border-l-red-500 border-b-amber-500 flex items-center justify-center">
                     <div className="text-center">
@@ -196,25 +200,11 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="space-y-3 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                      <span className="text-slate-600">Closed</span>
-                      <span className="font-semibold text-slate-800 ml-auto">{crsStatus.closed?.toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                      <span className="text-slate-600">In Progress</span>
-                      <span className="font-semibold text-slate-800 ml-auto">{crsStatus.inProgress?.toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                      <span className="text-slate-600">Open</span>
-                      <span className="font-semibold text-slate-800 ml-auto">{crsStatus.open?.toLocaleString()}</span>
-                    </div>
+                    <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500"></span><span className="text-slate-600">Closed</span><span className="font-semibold text-slate-800 ml-auto">{crsStatus.closed?.toLocaleString()}</span></div>
+                    <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-amber-500"></span><span className="text-slate-600">In Progress</span><span className="font-semibold text-slate-800 ml-auto">{crsStatus.inProgress?.toLocaleString()}</span></div>
+                    <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500"></span><span className="text-slate-600">Open</span><span className="font-semibold text-slate-800 ml-auto">{crsStatus.open?.toLocaleString()}</span></div>
                   </div>
                 </div>
-              ) : (
-                <div className="h-32 flex items-center justify-center text-xs text-slate-400">Loading...</div>
               )}
             </div>
 
@@ -223,24 +213,17 @@ export default function Dashboard() {
               <h3 className="font-semibold text-slate-800 flex items-center gap-2 mb-4">
                 <span className="w-3 h-3 rounded bg-amber-200 rotate-45"></span> By Category
               </h3>
-              {categories.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-4">No data yet</p>
-              ) : (
-                <div className="space-y-4">
-                  {categories.map((item, i) => (
-                    <div key={i} className="flex items-center text-xs">
-                      <span className="w-24 text-slate-600">{item.label}</span>
-                      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden mr-3">
-                        <div
-                          className={`h-full ${item.color} rounded-full`}
-                          style={{ width: `${Math.min(100, Math.round((item.value / Math.max(...categories.map(c => c.value))) * 100))}%` }}
-                        ></div>
-                      </div>
-                      <span className="text-slate-400 w-10 text-right">{item.value}</span>
+              <div className="space-y-4">
+                {categories.map((item, i) => (
+                  <div key={i} className="flex items-center text-xs">
+                    <span className="w-24 text-slate-600">{item.label}</span>
+                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden mr-3">
+                      <div className={`h-full ${item.width} ${item.color} rounded-full`}></div>
                     </div>
-                  ))}
-                </div>
-              )}
+                    <span className="text-slate-400 w-10 text-right">{item.value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -250,33 +233,21 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-4">
             <span className="text-xl">👷</span>
             <h3 className="font-semibold text-slate-800">Engineer Workload</h3>
-            <span className="bg-indigo-50 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full font-semibold ml-2">
-              {engineers.length} engineers
-            </span>
+            <span className="bg-indigo-50 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full font-semibold ml-2">{engineers.length} engineers</span>
           </div>
 
-          {engineers.length === 0 ? (
-            <p className="text-xs text-slate-400 text-center py-4">No engineer data yet</p>
-          ) : (
-            <div
-              className="grid gap-6 divide-x divide-slate-100"
-              style={{ gridTemplateColumns: `repeat(${engineers.length}, minmax(0, 1fr))` }}
-            >
-              {engineers.map((eng, i) => (
-                <div key={i} className={i !== 0 ? 'pl-6' : ''}>
-                  <p className="text-[10px] font-bold text-slate-400 tracking-wider mb-2">{eng.name}</p>
-                  <p className="text-2xl font-bold text-slate-800 mb-3">{eng.count}</p>
-                  <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden mb-2">
-                    <div
-                      className="h-full bg-indigo-500 rounded-full"
-                      style={{ width: `${Math.round((eng.count / maxEngCount) * 100)}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-[10px] text-slate-400">tasks assigned</p>
+          <div className="grid gap-6 divide-x divide-slate-100" style={{ gridTemplateColumns: `repeat(${engineers.length || 1}, minmax(0, 1fr))` }}>
+            {engineers.map((eng, i) => (
+              <div key={i} className={i !== 0 ? "pl-6" : ""}>
+                <p className="text-[10px] font-bold text-slate-400 tracking-wider mb-2">{eng.name}</p>
+                <p className="text-2xl font-bold text-slate-800 mb-3">{eng.count}</p>
+                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden mb-2">
+                  <div className={`h-full bg-indigo-500 rounded-full`} style={{ width: `${Math.round((eng.count / maxEngCount) * 100)}%` }}></div>
                 </div>
-              ))}
-            </div>
-          )}
+                <p className="text-[10px] text-slate-400">tasks assigned</p>
+              </div>
+            ))}
+          </div>
         </div>
 
       </div>

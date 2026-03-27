@@ -9,6 +9,7 @@ const pool = require("../db/db");
 const userRoutes = require("./routes/userRoutes");
 const documentRoutes = require("./routes/documentRoutes");
 const commentRoutes = require("./routes/commentRoutes");
+const drawingRoutes = require("./routes/drawingRoutes")
 
 const app = express();
 const port = 8080;
@@ -25,6 +26,7 @@ pool.connect()
 ========================================= */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use("/output", express.static("../ai-engine/output"));
 
 /* =========================================
    CORS (IMPORTANT FOR REACT FRONTEND)
@@ -110,6 +112,8 @@ passport.deserializeUser(async (id, done) => {
 app.use("/api/users", userRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/comments", commentRoutes);
+app.use("/api/drawings", drawingRoutes);
+
 
 /* =========================================
    SERVER
