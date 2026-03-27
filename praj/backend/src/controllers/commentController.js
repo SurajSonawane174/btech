@@ -22,7 +22,10 @@ module.exports.createComment = async (req, res) => {
       is_client_comment,
       comment_category,
       is_handwritten,
-      extraction_confidence_percent
+      extraction_confidence_percent,
+      assigned_to,
+      target_closure_date,
+      status,
     } = req.body;
 
     const clientCommentStr = is_client_comment ? "Y" : "N";
@@ -53,7 +56,10 @@ module.exports.createComment = async (req, res) => {
         clientCommentStr,
         comment_category,
         handwrittenStr,
-        extraction_confidence_percent
+        extraction_confidence_percent,
+        assigned_to,
+        target_closure_date,
+        status
       ]
     );
 

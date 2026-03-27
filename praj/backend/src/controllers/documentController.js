@@ -53,7 +53,7 @@ module.exports.getAllDocuments = async (req, res) => {
 module.exports.getDocumentById = async (req, res) => {
     try {
         const { id } = req.params;
-        const result = await pool.query('SELECT * FROM documents WHERE id = $1', [id]);
+        const result = await pool.query('SELECT * FROM get_document_by_praj_document_number($1::VARCHAR)', [id]);
         
         if (result.rows.length === 0) return res.status(404).json({ message: 'Document not found' });
         
