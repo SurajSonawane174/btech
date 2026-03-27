@@ -100,12 +100,12 @@ export default function Sidebar({ isOpen }) {
                   <div className="flex items-center gap-3"><SearchCode size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">CRS Lookup</span></div>
                 </NavLink>
               </li>
-              <li>
+              {/* <li>
                 <NavLink to="/review" className={navItemStyles}>
-                  <div className="flex items-center gap-3"><CheckSquare size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">CRS Review Sheet</span></div>
-                  {/* <span className="bg-rose-500/20 border border-rose-500/30 text-[10px] px-2 py-0.5 rounded-full text-yellow-500 font-bold shadow-[0_0_8px_rgba(244,63,94,0.3)]">13</span> */}
+                  <div className="flex items-center gap-3"><CheckSquare size={18} className="group-hover:text-cyan-300 transition-colors" /> <span className="text-sm">CRS Review</span></div>
+                  <span className="bg-rose-500/20 border border-rose-500/30 text-[10px] px-2 py-0.5 rounded-full text-yellow-500 font-bold shadow-[0_0_8px_rgba(244,63,94,0.3)]">13</span>
                 </NavLink>
-              </li>
+              </li> */}
             </ul>
           </div>
 

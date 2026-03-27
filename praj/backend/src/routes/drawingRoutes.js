@@ -11,9 +11,8 @@ const storage = multer.diskStorage({
     cb(null, "uploads/");
   },
   filename: function (req, file, cb) {
-    const ext = path.extname(file.originalname); // now works
-    const uniqueName = Date.now() + ext;
-    cb(null, uniqueName);
+    // Save the file exactly as the user uploaded it
+    cb(null, file.originalname);
   }
 });
 

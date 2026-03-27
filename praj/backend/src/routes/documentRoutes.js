@@ -6,24 +6,33 @@ const { isLoggedIn } = require("../middleware/auth");
 // router.use(isLoggedIn); // Protect all document routes
 
 
-// CREATE / GET Document
-// POST /api/documents
-router.post('/', documentController.createOrGetDocument);
 
-// READ All Documents
-// GET /api/documents
-router.get('/', documentController.getAllDocuments);
+// 1. STATIC ROUTES (Must go first!)
 
-// READ Single Document by ID
-// GET /api/documents/:id
-router.get('/:id', documentController.getDocumentById);
+// Get all documents across the entire system
+router.get("/", documentController.getAllDocuments);
 
-// UPDATE Document
-// PUT /api/documents/:id
-router.put('/:id', documentController.updateDocument);
+// Get filtered lists
+router.get("/released", documentController.getAllReleasedDocuments);
+router.get("/unreleased", documentController.getAllUnreleasedDocuments);
 
-// DELETE Document
-// DELETE /api/documents/:id
-router.delete('/:id', documentController.deleteDocument);
+// Create a new document (or get it if it already exists)
+router.post("/", documentController.createOrGetDocument);
+
+// 2. DYNAMIC ROUTES (Using :id as praj_document_number)
+
+// Get a single document by its document number (e.g., DWG099)
+router.get("/:id", documentController.getDocumentById);
+
+// Update document metadata
+router.put("/:id", documentController.updateDocument);
+
+// Delete a document (and cascade delete its comments)
+router.delete("/:id", documentController.deleteDocument);
+
+// 3. ACTION ROUTES 
+
+// Change a document's status to released
+router.put("/:id/release", documentController.releaseDocument);
 
 module.exports = router;

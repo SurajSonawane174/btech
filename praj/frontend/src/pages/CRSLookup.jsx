@@ -20,22 +20,38 @@ export default function CRSLookup() {
   async function fetchResults(sts, dNo = drawingNo, sup = supplier, poVal = po) {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (dNo)  params.append('drawingNo', dNo);
-      if (sup)  params.append('supplier', sup);
-      if (poVal) params.append('po', poVal);
-      // Only show drawings that have been released/staged for CRS
-      params.append('crs_staged', 'true');
-      if (sts && sts !== 'All') params.append('status', sts);
-
-      const res = await fetch(`${BASE_URL}/api/crs/lookup?${params}`, {
-        credentials: 'include'
+      // ✅ FIX: Point to the new PostgreSQL endpoint for released documents
+      const res = await fetch(`${BASE_URL}/api/documents/released`, {
+        method: 'GET',
+        mode: 'cors'
       });
-      const data = await res.json();
-      setResults(data.results || []);
-      setTotal(data.total || 0);
+      
+      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
+      let data = await res.json();
+
+      // ✅ FRONTEND FILTERING: Make the search boxes work seamlessly
+      if (dNo) data = data.filter(d => (d.praj_document_number || '').toLowerCase().includes(dNo.toLowerCase()));
+      if (sup) data = data.filter(d => (d.supplier_name || '').toLowerCase().includes(sup.toLowerCase()));
+      if (poVal) data = data.filter(d => (d.supplier_po_number || '').toLowerCase().includes(poVal.toLowerCase()));
+      if (sts && sts !== 'All') data = data.filter(d => (d.status || 'Open') === sts);
+
+      // Map the PostgreSQL column names to the frontend table format
+      const mapped = data.map(doc => ({
+        id:  doc.praj_document_number     || doc.id,
+        sup: doc.supplier_name            || '-',
+        po:  doc.supplier_po_number       || '-',
+        tot: doc.total_comments           || 0,
+        opn: doc.open_comments            || doc.total_comments || 0, // Fallback if open_comments isn't returned by DB
+        cls: doc.closed_comments          || 0,
+        status: doc.status                || 'Open',
+      }));
+
+      setResults(mapped);
+      setTotal(mapped.length);
     } catch (err) {
-      console.error(err);
+      console.error('Error fetching released documents:', err);
+      setResults([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
@@ -46,8 +62,7 @@ export default function CRSLookup() {
 
   async function handleExport() {
     try {
-      const params = new URLSearchParams({ drawingNo, supplier, po, status });
-      const res = await fetch(`${BASE_URL}/api/crs/export?${params}`, { credentials: 'include' });
+      const res = await fetch(`${BASE_URL}/api/documents/released`, { mode: 'cors' });
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -60,7 +75,7 @@ export default function CRSLookup() {
     }
   }
 
-  function goToReview(id) { navigate(`/crs-review/${id}`); }
+  function goToReview(id) { navigate(`/document/${id}`); }
 
   return (
     <Layout>
@@ -197,11 +212,7 @@ export default function CRSLookup() {
           </div>
 
           <div className="p-4 border-t border-slate-200/60 bg-white/40 flex justify-between items-center text-sm text-slate-500">
-            <span>Showing {results.length} of {total}</span>
-            <div className="flex gap-1">
-              <button className="w-8 h-8 flex items-center justify-center rounded-md bg-indigo-500 text-white font-bold shadow-sm">1</button>
-              <button className="w-8 h-8 flex items-center justify-center rounded-md bg-white border border-slate-200 hover:bg-slate-50 font-medium text-slate-600">2</button>
-            </div>
+            <span>Showing {results.length} of {total} records</span>
           </div>
         </div>
 

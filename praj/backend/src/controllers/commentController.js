@@ -22,7 +22,10 @@ module.exports.createComment = async (req, res) => {
       is_client_comment,
       comment_category,
       is_handwritten,
-      extraction_confidence_percent
+      extraction_confidence_percent,
+      assigned_to,
+      target_closure_date,
+      status,
     } = req.body;
 
     const clientCommentStr = is_client_comment ? "Y" : "N";
@@ -53,7 +56,10 @@ module.exports.createComment = async (req, res) => {
         clientCommentStr,
         comment_category,
         handwrittenStr,
-        extraction_confidence_percent
+        extraction_confidence_percent,
+        assigned_to,
+        target_closure_date,
+        status
       ]
     );
 
@@ -77,12 +83,12 @@ module.exports.getCommentsByDocument = async (req, res) => {
   try {
     const { documentId } = req.params;
 
-    if (!documentId || isNaN(documentId)) {
+    if (!documentId ) {
       return res.status(400).json({ message: "Invalid documentId" });
     }
 
     const result = await pool.query(
-      `SELECT * FROM get_comments_by_document($1::BIGINT)`,
+      `SELECT * FROM get_comments_by_praj_document_number($1::VARCHAR)`,
       [documentId]
     );
 
