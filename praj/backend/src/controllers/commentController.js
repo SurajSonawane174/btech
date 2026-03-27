@@ -77,12 +77,12 @@ module.exports.getCommentsByDocument = async (req, res) => {
   try {
     const { documentId } = req.params;
 
-    if (!documentId || isNaN(documentId)) {
+    if (!documentId ) {
       return res.status(400).json({ message: "Invalid documentId" });
     }
 
     const result = await pool.query(
-      `SELECT * FROM get_comments_by_document($1::BIGINT)`,
+      `SELECT * FROM get_comments_by_praj_document_number($1::VARCHAR)`,
       [documentId]
     );
 
