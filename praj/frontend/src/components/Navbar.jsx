@@ -49,12 +49,12 @@ export default function Navbar({ toggleSidebar }) {
         </button>
         
         {/* Upload Drawing */}
-        <button
+        {/* <button
           onClick={() => navigate('/upload')}
           className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"
         >
           <Upload size={16} /> Upload Drawing
-        </button>
+        </button> */}
       </div>
     </header>
   );

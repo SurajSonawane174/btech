@@ -19,13 +19,20 @@ export default function Login() {
 
     try {
       // ✅ REAL BACKEND CALL:
-      const res = await api.post("/api/users/login", { email, password });
-      
-      // Store token and user data
-      if (res.data.user) {
-        // For session-based auth, just set user info
-        login(res.data.user);
-      }
+      const res = await fetch("http://localhost:8080/api/users/login", {
+  method: "POST",
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ email, password }),
+});
+
+const data = await res.json();
+
+if (data.user) {
+  login(data.user);
+}
       
       navigate("/dashboard");
     } catch (err) {
