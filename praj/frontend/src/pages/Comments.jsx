@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import FileUpload from '../components/FileUpload';
+import CommentsGrid from '../components/CommentsGrid'; // Ensure this path is correct
 import {
   Search, Folder, Upload, X, Settings, Image as ImageIcon,
   CheckSquare, Check, Loader2, MessageSquare, UploadCloud, Send, ArrowRightCircle
@@ -20,27 +21,26 @@ const STEPS = [
 export default function Comments() {
   const navigate = useNavigate();
 
-  // — Drawing list state —
   const [drawingNo, setDrawingNo]     = useState('');
   const [supplier, setSupplier]       = useState('');
-  const [status, setStatus]           = useState('All');
+  const [listStatus, setListStatus]   = useState('All');
   const [drawings, setDrawings]       = useState([]);
   const [total, setTotal]             = useState(0);
   const [listLoading, setListLoading] = useState(false);
-  const [releasing, setReleasing]     = useState(null); // id of row being released
+  const [releasing, setReleasing]     = useState(null); 
 
-  // — Upload panel state —
   const [showUpload, setShowUpload]             = useState(false);
   const [loading, setLoading]                   = useState(false);
   const [currentStep, setCurrentStep]           = useState(-1);
   const [completedSteps, setCompleted]          = useState([]);
   const [done, setDone]                         = useState(false);
   const [extractedComments, setExtractedComments] = useState([]);
-  const [uploadedDocId, setUploadedDocId]       = useState(null); // doc id after upload
+  const [uploadedDocId, setUploadedDocId]       = useState(null); 
+
+  const [viewingDrawingId, setViewingDrawingId] = useState(null);
 
   useEffect(() => { fetchDrawings('All'); }, []);
 
-  // ── Drawing list ─────────────────────────────────────────────────
   async function fetchDrawings(sts, dNo = drawingNo, sup = supplier) {
     setListLoading(true);
     try {
@@ -48,7 +48,6 @@ export default function Comments() {
       if (dNo) params.append('drawingNo', dNo);
       if (sup) params.append('supplier', sup);
       if (sts && sts !== 'All') params.append('status', sts);
-      // Only fetch documents not yet staged for CRS
       params.append('crs_staged', 'false');
 
       const res = await fetch(`${BASE_URL}/api/documents?${params.toString()}`, {
@@ -87,7 +86,6 @@ export default function Comments() {
     }
   }
 
-  // ── Release a drawing to CRS ─────────────────────────────────────
   async function handleRelease(drawingId) {
     setReleasing(drawingId);
     try {
@@ -97,7 +95,6 @@ export default function Comments() {
       });
       if (!res.ok) throw new Error(`Release failed: ${res.status}`);
 
-      // Optimistically remove from list — it now lives in CRS Lookup
       setDrawings(prev => prev.filter(d => d.id !== drawingId));
       setTotal(prev => prev - 1);
     } catch (err) {
@@ -108,10 +105,9 @@ export default function Comments() {
     }
   }
 
-  function handleStatusChange(value) { setStatus(value); fetchDrawings(value); }
-  function handleSearch() { fetchDrawings(status); }
+  function handleListStatusChange(value) { setListStatus(value); fetchDrawings(value); }
+  function handleListSearch() { fetchDrawings(listStatus); }
 
-  // ── Upload helpers ───────────────────────────────────────────────
   async function runSteps() {
     setDone(false);
     setCompleted([]);
@@ -133,7 +129,6 @@ export default function Comments() {
   }
 
   function handleProcessComplete(payload) {
-    // payload may be: { documentId, comments: [] }  OR  []
     if (payload && payload.documentId) {
       setUploadedDocId(payload.documentId);
       setExtractedComments(payload.comments || []);
@@ -148,13 +143,13 @@ export default function Comments() {
     if (uploadedDocId) {
       await handleRelease(uploadedDocId);
     }
-    navigate('/crs-lookup');
+    navigate('/review');
   }
 
   function openUpload() { resetStatus(); setShowUpload(true); }
   function closeUpload() {
     setShowUpload(false);
-    if (done) fetchDrawings(status);
+    if (done) fetchDrawings(listStatus);
   }
 
   const getStepState = (i) => {
@@ -167,30 +162,38 @@ export default function Comments() {
     <Layout>
       <div className="max-w-7xl mx-auto space-y-6">
 
-        {/* ── Header ── */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">Comment Extraction</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Drawings pending review — release to CRS when ready</p>
+            <h1 className="text-2xl font-bold text-slate-800">
+              {viewingDrawingId ? `Comments for ${viewingDrawingId}` : 'Comment Extraction'}
+            </h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {viewingDrawingId 
+                ? 'Review and update comment statuses' 
+                : 'Drawings pending review — release to CRS when ready'}
+            </p>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/crs-lookup')}
-              className="border border-indigo-200 text-indigo-600 hover:bg-indigo-50 px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
-            >
-              <ArrowRightCircle size={16} /> CRS Lookup
-            </button>
-            <button
-              onClick={openUpload}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"
-            >
-              <Upload size={16} /> Upload New
-            </button>
+            {!viewingDrawingId && (
+              <>
+                <button
+                  onClick={() => navigate('/get-crs')}
+                  className="border border-indigo-200 text-indigo-600 hover:bg-indigo-50 px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors"
+                >
+                  <ArrowRightCircle size={16} /> CRS Lookup
+                </button>
+                <button
+                  onClick={openUpload}
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors shadow-sm"
+                >
+                  <Upload size={16} /> Upload New
+                </button>
+              </>
+            )}
           </div>
         </div>
 
-        {/* ── Upload Panel ── */}
-        {showUpload && (
+        {showUpload && !viewingDrawingId && (
           <div className="rounded-2xl border border-slate-200 shadow-md bg-white overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50">
               <div>
@@ -203,8 +206,6 @@ export default function Comments() {
             </div>
 
             <div className="p-6 grid grid-cols-12 gap-6 items-start">
-
-              {/* Left col: FileUpload + Release banner */}
               <div className="col-span-12 lg:col-span-8 min-w-0 space-y-4">
                 <FileUpload
                   loading={loading}
@@ -237,9 +238,7 @@ export default function Comments() {
                 )}
               </div>
 
-              {/* Right col: Status + Extracted list */}
               <div className="col-span-12 lg:col-span-4 space-y-4">
-
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
@@ -328,129 +327,132 @@ export default function Comments() {
                     )}
                   </div>
                 </div>
-
               </div>
             </div>
           </div>
         )}
 
-        {/* ── Search & Filter ── */}
-        <div className="bg-gradient-to-br from-white to-slate-50 p-5 rounded-xl border border-slate-200 shadow-sm flex gap-4 items-end">
-          <div className="flex-1">
-            <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Drawing No</label>
-            <input type="text" placeholder="e.g. praj-001" value={drawingNo} onChange={e => setDrawingNo(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
-          </div>
-          <div className="flex-1">
-            <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Supplier</label>
-            <input type="text" placeholder="Supplier name" value={supplier} onChange={e => setSupplier(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
-          </div>
-          <div className="flex-1">
-            <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Status</label>
-            <select value={status} onChange={e => handleStatusChange(e.target.value)}
-              className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none">
-              <option>All</option>
-              <option>Open</option>
-              <option>In Progress</option>
-              <option>Closed</option>
-            </select>
-          </div>
-          <button onClick={handleSearch} disabled={listLoading}
-            className="bg-indigo-500 hover:bg-indigo-600 text-white px-6 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all shadow-md shadow-indigo-200 disabled:opacity-60">
-            <Search size={16} /> {listLoading ? 'Searching...' : 'Search'}
-          </button>
-        </div>
-
-        {/* ── Table ── */}
-        <div className="bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-slate-200/60 flex items-center gap-3 bg-white/50 backdrop-blur-sm">
-            <Folder size={18} className="text-amber-500" />
-            <h3 className="font-bold text-slate-800">Pending CRS Release</h3>
-            <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold">{total} drawings</span>
-            <span className="ml-auto text-[11px] text-slate-400 italic">Click "Release for CRS" to move a drawing to CRS Lookup</span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="text-xs text-slate-400 border-b border-slate-200/60 uppercase tracking-wider bg-white/30">
-                  <th className="p-4 font-bold">Drawing No</th>
-                  <th className="p-4 font-bold">Customer Doc No</th>
-                  <th className="p-4 font-bold">Supplier</th>
-                  <th className="p-4 font-bold">PO</th>
-                  <th className="p-4 font-bold text-center">Total</th>
-                  <th className="p-4 font-bold text-center">Open</th>
-                  <th className="p-4 font-bold text-center">Closed</th>
-                  <th className="p-4 font-bold">Status</th>
-                  <th className="p-4 font-bold text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="text-sm bg-white/60">
-                {listLoading ? (
-                  <tr><td colSpan={9} className="p-8 text-center text-slate-400 text-sm">Loading...</td></tr>
-                ) : drawings.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="p-12 text-center">
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center">
-                          <Check size={22} className="text-emerald-400" />
-                        </div>
-                        <p className="text-slate-500 font-medium text-sm">All drawings have been released to CRS</p>
-                        <button onClick={() => navigate('/crs-lookup')} className="text-indigo-500 text-xs font-bold hover:underline">
-                          Go to CRS Lookup →
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ) : drawings.map((row, i) => (
-                  <tr key={i} className="border-b border-slate-100 hover:bg-white transition-colors">
-                    <td className="p-4 font-bold text-indigo-600">{row.id}</td>
-                    <td className="p-4 text-slate-600">{row.doc}</td>
-                    <td className="p-4 text-slate-600">{row.sup}</td>
-                    <td className="p-4 text-slate-600">{row.po}</td>
-                    <td className="p-4 text-slate-800 font-medium text-center">{row.tot}</td>
-                    <td className="p-4 text-red-500 font-bold text-center">{row.opn}</td>
-                    <td className="p-4 text-emerald-500 font-bold text-center">{row.cls}</td>
-                    <td className="p-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
-                        row.status === 'Open'        ? 'bg-red-50 text-red-600 border-red-100' :
-                        row.status === 'In Progress' ? 'bg-amber-50 text-amber-600 border-amber-100' :
-                        'bg-emerald-50 text-emerald-600 border-emerald-100'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${
-                          row.status === 'Open' ? 'bg-red-500' :
-                          row.status === 'In Progress' ? 'bg-amber-500' : 'bg-emerald-500'
-                        }`}></span>
-                        {row.status}
-                      </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <button
-                        onClick={() => handleRelease(row.id)}
-                        disabled={releasing === row.id}
-                        className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-1.5 rounded-md text-xs font-semibold shadow-sm transition-colors"
-                      >
-                        {releasing === row.id
-                          ? <><Loader2 size={12} className="animate-spin" /> Releasing…</>
-                          : <><Send size={12} /> Release </>}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="p-4 border-t border-slate-200/60 bg-white/40 flex justify-between items-center text-sm text-slate-500">
-            <span>Showing {drawings.length} of {total} drawings</span>
-            <div className="flex gap-1">
-              <button className="w-8 h-8 flex items-center justify-center rounded-md bg-indigo-500 text-white font-bold shadow-sm">1</button>
-              <button className="w-8 h-8 flex items-center justify-center rounded-md bg-white border border-slate-200 hover:bg-slate-50 font-medium text-slate-600">2</button>
-              <button className="w-8 h-8 flex items-center justify-center rounded-md bg-white border border-slate-200 hover:bg-slate-50 font-medium text-slate-600">3</button>
+        {viewingDrawingId ? (
+          <CommentsGrid 
+            drawingId={viewingDrawingId} 
+            onBack={() => setViewingDrawingId(null)} 
+          />
+        ) : (
+          <>
+            <div className="bg-gradient-to-br from-white to-slate-50 p-5 rounded-xl border border-slate-200 shadow-sm flex gap-4 items-end">
+              <div className="flex-1">
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Drawing No</label>
+                <input type="text" placeholder="e.g. praj-001" value={drawingNo} onChange={e => setDrawingNo(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Supplier</label>
+                <input type="text" placeholder="Supplier name" value={supplier} onChange={e => setSupplier(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">Status</label>
+                <select value={listStatus} onChange={e => handleListStatusChange(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none">
+                  <option>All</option>
+                  <option>Open</option>
+                  <option>In Progress</option>
+                  <option>Closed</option>
+                </select>
+              </div>
+              <button onClick={handleListSearch} disabled={listLoading}
+                className="bg-indigo-500 hover:bg-indigo-600 text-white px-6 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all shadow-md shadow-indigo-200 disabled:opacity-60">
+                <Search size={16} /> {listLoading ? 'Searching...' : 'Search'}
+              </button>
             </div>
-          </div>
-        </div>
+
+            <div className="bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-slate-200/60 flex items-center gap-3 bg-white/50 backdrop-blur-sm">
+                <Folder size={18} className="text-amber-500" />
+                <h3 className="font-bold text-slate-800">Pending CRS Release</h3>
+                <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold">{total} drawings</span>
+                <span className="ml-auto text-[11px] text-slate-400 italic">Click "View" to open the detailed comments grid</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="text-xs text-slate-400 border-b border-slate-200/60 uppercase tracking-wider bg-white/30">
+                      <th className="p-4 font-bold">Drawing No</th>
+                      <th className="p-4 font-bold">Customer Doc No</th>
+                      <th className="p-4 font-bold">Supplier</th>
+                      <th className="p-4 font-bold">PO</th>
+                      <th className="p-4 font-bold text-center">Total</th>
+                      <th className="p-4 font-bold text-center">Open</th>
+                      <th className="p-4 font-bold text-center">Closed</th>
+                      <th className="p-4 font-bold">Status</th>
+                      <th className="p-4 font-bold text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-sm bg-white/60">
+                    {listLoading ? (
+                      <tr><td colSpan={9} className="p-8 text-center text-slate-400 text-sm">Loading...</td></tr>
+                    ) : drawings.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-12 text-center">
+                          <div className="flex flex-col items-center gap-3">
+                            <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center">
+                              <Check size={22} className="text-emerald-400" />
+                            </div>
+                            <p className="text-slate-500 font-medium text-sm">All drawings have been released to CRS</p>
+                            <button onClick={() => navigate('/crs-lookup')} className="text-indigo-500 text-xs font-bold hover:underline">
+                              Go to CRS Lookup →
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : drawings.map((row, i) => (
+                      <tr key={i} className="border-b border-slate-100 hover:bg-white transition-colors">
+                        <td className="p-4 font-bold text-indigo-600">{row.id}</td>
+                        <td className="p-4 text-slate-600">{row.doc}</td>
+                        <td className="p-4 text-slate-600">{row.sup}</td>
+                        <td className="p-4 text-slate-600">{row.po}</td>
+                        <td className="p-4 text-slate-800 font-medium text-center">{row.tot}</td>
+                        <td className="p-4 text-red-500 font-bold text-center">{row.opn}</td>
+                        <td className="p-4 text-emerald-500 font-bold text-center">{row.cls}</td>
+                        <td className="p-4">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                            row.status === 'Open'        ? 'bg-red-50 text-red-600 border-red-100' :
+                            row.status === 'In Progress' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                            'bg-emerald-50 text-emerald-600 border-emerald-100'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              row.status === 'Open' ? 'bg-red-500' :
+                              row.status === 'In Progress' ? 'bg-amber-500' : 'bg-emerald-500'
+                            }`}></span>
+                            {row.status}
+                          </span>
+                        </td>
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => setViewingDrawingId(row.id)}
+                            className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md text-xs font-semibold shadow-sm transition-colors"
+                          >
+                            <Send size={12} /> View
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="p-4 border-t border-slate-200/60 bg-white/40 flex justify-between items-center text-sm text-slate-500">
+                <span>Showing {drawings.length} of {total} drawings</span>
+                <div className="flex gap-1">
+                  <button className="w-8 h-8 flex items-center justify-center rounded-md bg-indigo-500 text-white font-bold shadow-sm">1</button>
+                  <button className="w-8 h-8 flex items-center justify-center rounded-md bg-white border border-slate-200 hover:bg-slate-50 font-medium text-slate-600">2</button>
+                  <button className="w-8 h-8 flex items-center justify-center rounded-md bg-white border border-slate-200 hover:bg-slate-50 font-medium text-slate-600">3</button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
 
       </div>
     </Layout>

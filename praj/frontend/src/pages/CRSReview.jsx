@@ -1,121 +1,144 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import Layout from '../components/Layout';
-import { FileText, Download, FileSpreadsheet, Image as ImageIcon, Calendar, Search, Filter, ArrowLeft } from 'lucide-react';
+import { FileText, Download, FileSpreadsheet, Image as ImageIcon, Calendar, Search, Filter } from 'lucide-react';
 
 const BASE_URL = 'http://localhost:8080';
 
 export default function CRSReview() {
   const { drawingNo } = useParams();
-  const navigate = useNavigate();
 
-  const [metadata, setMetadata]       = useState(null);
-  const [allTableData, setAllTableData] = useState([]);
-  const [tableData, setTableData]     = useState([]);
-  const [engineers, setEngineers]     = useState([]);
-  const [rowEdits, setRowEdits]       = useState({});
-  const [searchTerm, setSearchTerm]   = useState('');
+  const [metadata, setMetadata] = useState(null);
+  const [allTableData, setAllTableData] = useState([]); // Master list of comments
+  const [tableData, setTableData] = useState([]);       // Filtered list shown on screen
+  const [engineers, setEngineers] = useState([]);
+  
+  // Tracking edits by comment ID (cId) so filtering doesn't scramble unsaved changes
+  const [rowEdits, setRowEdits] = useState({});
+
+  // Filter States
+  const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
 
   useEffect(() => {
-    const id = drawingNo || '1';
+    const id = drawingNo || '1'; 
 
+    // 1. Fetch Comments
     fetch(`${BASE_URL}/api/comments/document/${id}`, { mode: 'cors' })
-      .then(res => { if (!res.ok) throw new Error('Failed'); return res.json(); })
-      .then(data => {
-        const mapped = data.map((item, index) => ({
-          sr:    index + 1,
-          doc:   item.document_id || id,
-          rev:   '-',
-          cDoc:  '-',
-          cRev:  '-',
-          page:  item.page_sheet,
-          cId:   item.comment_id || `C-${index + 1}`,
-          comment: item.actual_extracted_comment || '-',
-          snapshotUrl: item.snapshot_file,
-          person: item.name_of_person_commented || 'Unknown',
-          date: (item.comment_datetime || item.created_at)
-            ? new Date(item.comment_datetime || item.created_at).toLocaleDateString()
-            : '-',
-          color:    item.comment_color || 'Black',
-          client:   item.is_client_comment ? 'Yes' : 'No',
-          cat:      item.comment_category || 'General',
-          hw:       item.is_handwritten ? 'Yes' : 'No',
-          conf:     item.extraction_confidence_percent ? `${item.extraction_confidence_percent}%` : '100%',
-          assignee: item.assignee || '',
-          target:   item.target || '',
-          crs:      item.crs_ref || '-',
-          res:      item.resolution || '',
-          status:   item.status || 'Open',
-          ev:       item.evidence || '',
-        }));
-        setAllTableData(mapped);
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to fetch comments");
+        return res.json();
       })
-      .catch(err => console.error('Error fetching comments:', err));
+      .then(data => {
+        const mappedComments = data.map((item, index) => ({
+          sr: index + 1,
+          doc: item.document_id || id,
+          rev: "-",
+          cDoc: "-",
+          cRev: "-",
+          page: item.page_sheet,
+          cId: item.comment_id || `C-${index+1}`,
+          comment: item.actual_extracted_comment || "-",
+          snapshotUrl: item.snapshot_file,
+          person: item.name_of_person_commented || "Unknown",
+          date: (item.comment_datetime || item.created_at) 
+                  ? new Date(item.comment_datetime || item.created_at).toLocaleDateString() 
+                  : "-",
+          color: item.comment_color || "Black",
+          client: item.is_client_comment ? "Yes" : "No",
+          cat: item.comment_category || "General",
+          hw: item.is_handwritten ? "Yes" : "No",
+          conf: item.extraction_confidence_percent ? `${item.extraction_confidence_percent}%` : "100%",
+          assignee: item.assignee || "",
+          target: item.target || "",
+          crs: item.crs_ref || "-",
+          res: item.resolution || "",
+          status: item.status || "Open",
+          ev: item.evidence || ""
+        }));
+        
+        setAllTableData(mappedComments); // Save to master
+      })
+      .catch(err => console.error("Error fetching comments:", err));
 
+    // 2. Fetch Metadata
     fetch(`${BASE_URL}/api/crs/drawing/${id}/metadata`, { mode: 'cors' })
       .then(res => res.ok ? res.json() : null)
       .then(data => { if (data) setMetadata(data); })
-      .catch(err => console.error('Error fetching metadata:', err));
+      .catch(err => console.error("Error fetching metadata:", err));
 
+    // 3. Fetch Engineers
     fetch(`${BASE_URL}/api/engineers`, { mode: 'cors' })
       .then(res => res.ok ? res.json() : [])
       .then(data => setEngineers(data))
-      .catch(err => console.error('Error fetching engineers:', err));
+      .catch(err => console.error("Error fetching engineers:", err));
+      
   }, [drawingNo]);
 
-  // Filtering
+  // Handle Filtering (Runs whenever search, status, or raw data changes)
   useEffect(() => {
     let filtered = allTableData;
-    if (searchTerm.trim()) {
-      const lower = searchTerm.toLowerCase();
-      filtered = filtered.filter(r =>
-        r.comment.toLowerCase().includes(lower) ||
-        r.person.toLowerCase().includes(lower) ||
-        r.cId.toLowerCase().includes(lower) ||
-        r.cat.toLowerCase().includes(lower)
+
+    if (searchTerm.trim() !== '') {
+      const lowerSearch = searchTerm.toLowerCase();
+      filtered = filtered.filter(row => 
+        row.comment.toLowerCase().includes(lowerSearch) || 
+        row.person.toLowerCase().includes(lowerSearch) ||
+        row.cId.toLowerCase().includes(lowerSearch) ||
+        row.cat.toLowerCase().includes(lowerSearch)
       );
     }
-    if (filterStatus !== 'All') filtered = filtered.filter(r => r.status === filterStatus);
+
+    if (filterStatus !== 'All') {
+      filtered = filtered.filter(row => row.status === filterStatus);
+    }
+
     setTableData(filtered);
   }, [searchTerm, filterStatus, allTableData]);
 
+  // Edits are now tracked by rowId instead of index
   function setField(rowId, field, value) {
     setRowEdits(prev => ({ ...prev, [rowId]: { ...prev[rowId], [field]: value } }));
   }
 
   async function handleSave(row) {
     const edits = rowEdits[row.cId] || {};
+    
     const payload = {
-      commentId:  row.cId,
+      commentId: row.cId,
       assignee:   edits.assignee   ?? row.assignee,
       target:     edits.target     ?? row.target,
       resolution: edits.resolution ?? row.res,
       status:     edits.status     ?? row.status,
       evidence:   edits.evidence   ?? row.ev,
     };
+    
     try {
       const res = await fetch(`${BASE_URL}/api/crs/drawing/${drawingNo}/comments/${row.cId}`, {
-        method: 'PATCH', mode: 'cors',
+        method: 'PATCH',
+        mode: 'cors',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error('Failed to save');
-      setAllTableData(prev => prev.map(r => r.cId === row.cId
-        ? { ...r, ...payload, res: payload.resolution, ev: payload.evidence }
-        : r
-      ));
+
+      if (!res.ok) throw new Error("Failed to save");
+
+      // Update the Master Data (Filtering auto-updates the UI)
+      setAllTableData(prev => prev.map(r => r.cId === row.cId ? { ...r, ...payload, res: payload.resolution, ev: payload.evidence } : r));
+      
+      // Clear the unsaved edits for this specific row
       setRowEdits(prev => { const n = { ...prev }; delete n[row.cId]; return n; });
     } catch (err) {
       console.error('Save failed:', err);
-      alert('Failed to save changes. Check console for details.');
+      alert("Failed to save changes. Check console for details.");
     }
   }
 
   async function handleDownload(format) {
     try {
       const res = await fetch(`${BASE_URL}/api/crs/drawing/${drawingNo}/export/${format}`, { mode: 'cors' });
-      if (!res.ok) throw new Error('Download failed');
+      if (!res.ok) throw new Error("Download failed");
+
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -145,31 +168,29 @@ export default function CRSReview() {
     <Layout>
       <div className="max-w-full 2xl:max-w-7xl mx-auto space-y-6">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="flex justify-between items-end">
           <div>
-            <button
-              onClick={() => navigate('/crs-lookup')}
-              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 mb-2 transition-colors"
-            >
-              <ArrowLeft size={13} /> Back to CRS Lookup
-            </button>
             <h1 className="text-2xl font-bold text-slate-800">CRS Review — {drawingNo || metadata?.docNo}</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Inline comment resolution — assign, update status, add evidence</p>
+            <p className="text-sm text-slate-500">Inline comment resolution — assign, update status, add evidence</p>
           </div>
           <div className="flex gap-3">
-            <button onClick={() => handleDownload('excel')}
-              className="bg-white border border-slate-200 hover:bg-slate-50 text-indigo-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-sm">
+            <button
+              onClick={() => handleDownload('excel')}
+              className="bg-white border border-slate-200 hover:bg-slate-50 text-indigo-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
+            >
               <FileSpreadsheet size={16} className="text-emerald-500" /> Download Excel
             </button>
-            <button onClick={() => handleDownload('pdf')}
-              className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-sm">
+            <button
+              onClick={() => handleDownload('pdf')}
+              className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all shadow-sm"
+            >
               <FileText size={16} /> Download PDF
             </button>
           </div>
         </div>
 
-        {/* ── Metadata Banner ── */}
+        {/* Metadata Banner */}
         {metadata && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 grid grid-cols-6 gap-4">
             {[
@@ -188,31 +209,45 @@ export default function CRSReview() {
           </div>
         )}
 
-        {/* ── Resolution Grid ── */}
+        {/* Resolution Grid Table Container */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-
+          
+          {/* Top Bar with Title and Filters */}
           <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between bg-slate-50/50 gap-4">
             <div className="flex items-center gap-3">
               <FileText size={18} className="text-rose-400" />
               <h3 className="font-bold text-slate-800">Resolution Grid</h3>
               <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold">{tableData.length} comments</span>
             </div>
+            
+            {/* Filter Controls */}
             <div className="flex items-center gap-3">
               <div className="relative">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="text" placeholder="Search comments..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                  className="pl-8 pr-4 py-1.5 border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow w-64" />
+                <input
+                  type="text"
+                  placeholder="Search comments..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-8 pr-4 py-1.5 border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow w-64"
+                />
               </div>
               <div className="relative">
                 <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-                  className="pl-8 pr-4 py-1.5 border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500 appearance-none bg-white cursor-pointer">
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className="pl-8 pr-4 py-1.5 border border-slate-200 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500 appearance-none bg-white cursor-pointer"
+                >
                   <option value="All">All Statuses</option>
                   <option value="Open">Open</option>
                   <option value="In Progress">In Progress</option>
                   <option value="Closed">Closed</option>
                 </select>
               </div>
+              <Link to="/get-crs" className="text-sm text-indigo-600 hover:text-indigo-800 transition-colors ml-4 font-medium">
+                ← Back
+              </Link>
             </div>
           </div>
 
@@ -248,8 +283,8 @@ export default function CRSReview() {
               <tbody className="text-sm text-slate-600">
                 {tableData.length === 0 ? (
                   <tr><td colSpan={23} className="p-8 text-center text-slate-400 text-sm">No comments match your filter.</td></tr>
-                ) : tableData.map((row) => {
-                  const edits = rowEdits[row.cId] || {};
+                ) : tableData.map((row, i) => {
+                  const edits = rowEdits[row.cId] || {}; // Uses row.cId instead of map index (i)
                   return (
                     <tr key={row.cId} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="p-4 text-slate-500">{row.sr}</td>
@@ -263,7 +298,8 @@ export default function CRSReview() {
                       <td className="p-4 text-center">
                         {row.snapshotUrl
                           ? <a href={row.snapshotUrl} target="_blank" rel="noopener noreferrer"><ImageIcon size={18} className="text-emerald-500/80 mx-auto" /></a>
-                          : <ImageIcon size={18} className="text-slate-300 mx-auto" />}
+                          : <ImageIcon size={18} className="text-slate-300 mx-auto" />
+                        }
                       </td>
                       <td className="p-4">{row.person}</td>
                       <td className="p-4 text-emerald-600 font-medium">{row.date}</td>
@@ -280,37 +316,57 @@ export default function CRSReview() {
 
                       {/* Editable fields */}
                       <td className="p-4">
-                        <select value={edits.assignee ?? row.assignee} onChange={e => setField(row.cId, 'assignee', e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none">
+                        <select
+                          value={edits.assignee ?? row.assignee}
+                          onChange={e => setField(row.cId, 'assignee', e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
+                        >
                           <option value="">Select...</option>
                           {engineers.map(eng => <option key={eng.id} value={eng.name}>{eng.name}</option>)}
                         </select>
                       </td>
                       <td className="p-4 relative">
-                        <input type="text" value={edits.target ?? row.target} onChange={e => setField(row.cId, 'target', e.target.value)}
-                          className="w-[110px] bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md pl-2 pr-7 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none" />
+                        <input
+                          type="text"
+                          value={edits.target ?? row.target}
+                          onChange={e => setField(row.cId, 'target', e.target.value)}
+                          className="w-[110px] bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md pl-2 pr-7 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
+                        />
                         <Calendar size={12} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                       </td>
                       <td className="p-4 font-bold text-indigo-600">{row.crs}</td>
                       <td className="p-4">
-                        <input type="text" value={edits.resolution ?? row.res} onChange={e => setField(row.cId, 'resolution', e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none" />
+                        <input
+                          type="text"
+                          value={edits.resolution ?? row.res}
+                          onChange={e => setField(row.cId, 'resolution', e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
+                        />
                       </td>
                       <td className="p-4">
-                        <select value={edits.status ?? row.status} onChange={e => setField(row.cId, 'status', e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none">
+                        <select
+                          value={edits.status ?? row.status}
+                          onChange={e => setField(row.cId, 'status', e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
+                        >
                           <option>Open</option>
                           <option>In Progress</option>
                           <option>Closed</option>
                         </select>
                       </td>
                       <td className="p-4">
-                        <input type="text" value={edits.evidence ?? row.ev} onChange={e => setField(row.cId, 'evidence', e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none" />
+                        <input
+                          type="text"
+                          value={edits.evidence ?? row.ev}
+                          onChange={e => setField(row.cId, 'evidence', e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-md px-2 py-1.5 focus:ring-1 focus:ring-indigo-500 outline-none"
+                        />
                       </td>
                       <td className="p-4 text-center">
-                        <button onClick={() => handleSave(row)}
-                          className="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm">
+                        <button
+                          onClick={() => handleSave(row)}
+                          className="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors shadow-sm"
+                        >
                           Save
                         </button>
                       </td>
@@ -329,7 +385,6 @@ export default function CRSReview() {
             </div>
           </div>
         </div>
-
       </div>
     </Layout>
   );
