@@ -4,7 +4,7 @@ import Layout from '../components/Layout';
 import FileUpload from '../components/FileUpload';
 import {
   Search, Folder, Upload, X, Settings, Image as ImageIcon,
-  CheckSquare, Check, Loader2, MessageSquare, UploadCloud, Send, ArrowRightCircle
+  CheckSquare, Check, Loader2, MessageSquare, UploadCloud, Eye, ArrowRightCircle
 } from 'lucide-react';
 
 const BASE_URL = 'http://localhost:8080';
@@ -27,7 +27,6 @@ export default function Comments() {
   const [drawings, setDrawings]       = useState([]);
   const [total, setTotal]             = useState(0);
   const [listLoading, setListLoading] = useState(false);
-  const [releasing, setReleasing]     = useState(null); // id of row being released
 
   // — Upload panel state —
   const [showUpload, setShowUpload]             = useState(false);
@@ -36,76 +35,52 @@ export default function Comments() {
   const [completedSteps, setCompleted]          = useState([]);
   const [done, setDone]                         = useState(false);
   const [extractedComments, setExtractedComments] = useState([]);
-  const [uploadedDocId, setUploadedDocId]       = useState(null); // doc id after upload
+  const [uploadedDocId, setUploadedDocId]       = useState(null); 
 
   useEffect(() => { fetchDrawings('All'); }, []);
 
-  // ── Drawing list ─────────────────────────────────────────────────
+  // ── Fetch Unreleased Drawings ────────────────────────────────────
   async function fetchDrawings(sts, dNo = drawingNo, sup = supplier) {
     setListLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (dNo) params.append('drawingNo', dNo);
-      if (sup) params.append('supplier', sup);
-      if (sts && sts !== 'All') params.append('status', sts);
-      // Only fetch documents not yet staged for CRS
-      params.append('crs_staged', 'false');
-
-      const res = await fetch(`${BASE_URL}/api/documents?${params.toString()}`, {
+      // ✅ FIX: Hitting the exact endpoint for unreleased documents
+      const res = await fetch(`${BASE_URL}/api/documents/unreleased`, {
         method: 'GET', mode: 'cors',
         headers: { 'Content-Type': 'application/json' },
       });
       if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
 
-      const data = await res.json();
-      let mapped = [];
-      let totalCount = 0;
+      let data = await res.json();
 
-      if (Array.isArray(data)) {
-        mapped = data.map(doc => ({
-          id:  doc.praj_document_number    || doc.id,
-          doc: doc.customer_document_number || '-',
-          sup: doc.supplier_name            || '-',
-          po:  doc.supplier_po_number       || '-',
-          tot: doc.total_comments           || 0,
-          opn: doc.open_comments            || 0,
-          cls: doc.closed_comments          || 0,
-          status: doc.status                || 'Open',
-        }));
-        totalCount = mapped.length;
-      } else if (data && data.drawings) {
-        mapped = data.drawings;
-        totalCount = data.total || data.drawings.length;
-      }
+      // ✅ FRONTEND FILTERING: Since our custom DB function returns all unreleased docs, 
+      // we filter them locally based on your search inputs to keep the UI snappy!
+      if (dNo) data = data.filter(d => (d.praj_document_number || '').toLowerCase().includes(dNo.toLowerCase()));
+      if (sup) data = data.filter(d => (d.supplier_name || '').toLowerCase().includes(sup.toLowerCase()));
+      if (sts && sts !== 'All') data = data.filter(d => (d.status || 'Open') === sts);
+
+      const mapped = data.map(doc => ({
+        id:  doc.praj_document_number    || doc.id,
+        doc: doc.customer_document_number || '-',
+        sup: doc.supplier_name            || '-',
+        po:  doc.supplier_po_number       || '-',
+        tot: doc.total_comments           || 0,
+        opn: doc.open_comments            || 0,
+        cls: doc.closed_comments          || 0,
+        status: doc.status                || 'Open',
+      }));
 
       setDrawings(mapped);
-      setTotal(totalCount);
+      setTotal(mapped.length);
     } catch (err) {
-      console.error('Failed to fetch drawings:', err);
+      console.error('Failed to fetch unreleased drawings:', err);
     } finally {
       setListLoading(false);
     }
   }
 
-  // ── Release a drawing to CRS ─────────────────────────────────────
-  async function handleRelease(drawingId) {
-    setReleasing(drawingId);
-    try {
-      const res = await fetch(`${BASE_URL}/api/documents/${drawingId}/release-crs`, {
-        method: 'POST', mode: 'cors',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (!res.ok) throw new Error(`Release failed: ${res.status}`);
-
-      // Optimistically remove from list — it now lives in CRS Lookup
-      setDrawings(prev => prev.filter(d => d.id !== drawingId));
-      setTotal(prev => prev - 1);
-    } catch (err) {
-      console.error('Release failed:', err);
-      alert('Failed to release drawing to CRS. Please try again.');
-    } finally {
-      setReleasing(null);
-    }
+  // ── Navigate to Document View ────────────────────────────────────
+  function handleView(drawingId) {
+    navigate(`/document/${drawingId}`);
   }
 
   function handleStatusChange(value) { setStatus(value); fetchDrawings(value); }
@@ -133,7 +108,6 @@ export default function Comments() {
   }
 
   function handleProcessComplete(payload) {
-    // payload may be: { documentId, comments: [] }  OR  []
     if (payload && payload.documentId) {
       setUploadedDocId(payload.documentId);
       setExtractedComments(payload.comments || []);
@@ -144,11 +118,12 @@ export default function Comments() {
     }
   }
 
-  async function handleReleaseFromUpload() {
+  function handleViewFromUpload() {
     if (uploadedDocId) {
-      await handleRelease(uploadedDocId);
+      handleView(uploadedDocId);
+    } else {
+      navigate('/crs-lookup');
     }
-    navigate('/crs-lookup');
   }
 
   function openUpload() { resetStatus(); setShowUpload(true); }
@@ -170,8 +145,8 @@ export default function Comments() {
         {/* ── Header ── */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">Comment Extraction</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Drawings pending review — release to CRS when ready</p>
+            <h1 className="text-2xl font-bold text-slate-800">Unreleased Documents</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Review newly extracted comments before releasing to CRS</p>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -197,14 +172,12 @@ export default function Comments() {
                 <h2 className="text-lg font-bold text-slate-900">Process New Drawing</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Upload a PDF drawing for OCR comment extraction and CRS generation</p>
               </div>
-              <button onClick={closeUpload} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-200 transition-colors text-slate-500">
-                <X size={18} />
-              </button>
+              
             </div>
 
             <div className="p-6 grid grid-cols-12 gap-6 items-start">
 
-              {/* Left col: FileUpload + Release banner */}
+              {/* Left col: FileUpload + Banner */}
               <div className="col-span-12 lg:col-span-8 min-w-0 space-y-4">
                 <FileUpload
                   loading={loading}
@@ -215,23 +188,23 @@ export default function Comments() {
                 />
 
                 {done && (
-                  <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-4">
+                  <div className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-xl px-5 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                      <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center flex-shrink-0">
                         <Check size={16} className="text-white" />
                       </div>
                       <div>
-                        <p className="text-sm font-bold text-emerald-800">Processing complete</p>
-                        <p className="text-xs text-emerald-600 mt-0.5">
-                          {extractedComments.length} comment{extractedComments.length !== 1 ? 's' : ''} extracted — release to begin CRS review
+                        <p className="text-sm font-bold text-indigo-900">Processing complete</p>
+                        <p className="text-xs text-indigo-700 mt-0.5">
+                          {extractedComments.length} comment{extractedComments.length !== 1 ? 's' : ''} extracted — view the document to review
                         </p>
                       </div>
                     </div>
                     <button
-                      onClick={handleReleaseFromUpload}
-                      className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-md shadow-emerald-200 transition-all duration-150"
+                      onClick={handleViewFromUpload}
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white px-5 py-2.5 rounded-lg text-sm font-semibold shadow-md shadow-indigo-200 transition-all duration-150"
                     >
-                      <Send size={15} /> Flag
+                      <Eye size={15} /> View
                     </button>
                   </div>
                 )}
@@ -366,9 +339,9 @@ export default function Comments() {
         <div className="bg-gradient-to-br from-slate-50 to-indigo-50/30 rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-5 border-b border-slate-200/60 flex items-center gap-3 bg-white/50 backdrop-blur-sm">
             <Folder size={18} className="text-amber-500" />
-            <h3 className="font-bold text-slate-800">Pending CRS Release</h3>
+            <h3 className="font-bold text-slate-800">Unreleased Documents</h3>
             <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold">{total} drawings</span>
-            <span className="ml-auto text-[11px] text-slate-400 italic">Click "Release for CRS" to move a drawing to CRS Lookup</span>
+            <span className="ml-auto text-[11px] text-slate-400 italic">Click "View" to open the document and review comments</span>
           </div>
 
           <div className="overflow-x-auto">
@@ -393,13 +366,10 @@ export default function Comments() {
                   <tr>
                     <td colSpan={9} className="p-12 text-center">
                       <div className="flex flex-col items-center gap-3">
-                        <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center">
-                          <Check size={22} className="text-emerald-400" />
+                        <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center">
+                          <Check size={22} className="text-indigo-400" />
                         </div>
-                        <p className="text-slate-500 font-medium text-sm">All drawings have been released to CRS</p>
-                        <button onClick={() => navigate('/crs-lookup')} className="text-indigo-500 text-xs font-bold hover:underline">
-                          Go to CRS Lookup →
-                        </button>
+                        <p className="text-slate-500 font-medium text-sm">No unreleased documents found.</p>
                       </div>
                     </td>
                   </tr>
@@ -427,13 +397,10 @@ export default function Comments() {
                     </td>
                     <td className="p-4 text-center">
                       <button
-                        onClick={() => handleRelease(row.id)}
-                        disabled={releasing === row.id}
-                        className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-3 py-1.5 rounded-md text-xs font-semibold shadow-sm transition-colors"
+                        onClick={() => handleView(row.id)}
+                        className="inline-flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-200 px-3 py-1.5 rounded-md text-xs font-semibold shadow-sm transition-colors"
                       >
-                        {releasing === row.id
-                          ? <><Loader2 size={12} className="animate-spin" /> Releasing…</>
-                          : <><Send size={12} /> Release </>}
+                        <Eye size={12} /> View
                       </button>
                     </td>
                   </tr>
@@ -443,12 +410,7 @@ export default function Comments() {
           </div>
 
           <div className="p-4 border-t border-slate-200/60 bg-white/40 flex justify-between items-center text-sm text-slate-500">
-            <span>Showing {drawings.length} of {total} drawings</span>
-            <div className="flex gap-1">
-              <button className="w-8 h-8 flex items-center justify-center rounded-md bg-indigo-500 text-white font-bold shadow-sm">1</button>
-              <button className="w-8 h-8 flex items-center justify-center rounded-md bg-white border border-slate-200 hover:bg-slate-50 font-medium text-slate-600">2</button>
-              <button className="w-8 h-8 flex items-center justify-center rounded-md bg-white border border-slate-200 hover:bg-slate-50 font-medium text-slate-600">3</button>
-            </div>
+            <span>Showing {drawings.length} of {total} documents</span>
           </div>
         </div>
 

@@ -101,6 +101,16 @@ export default function App() {
             }
           />
 
+          <Route
+            path="/document/:id"
+            element={
+              <PrivateRoute roles={["admin", "user"]}>
+                <CRSReview />
+              </PrivateRoute>
+            }
+            />
+
+
           {/* Unauthorized */}
           <Route path="/not-authorized" element={<NotAuthorized />} />
 

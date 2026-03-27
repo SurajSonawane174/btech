@@ -11,8 +11,14 @@ const documentRoutes = require("./routes/documentRoutes");
 const commentRoutes = require("./routes/commentRoutes");
 const drawingRoutes = require("./routes/drawingRoutes")
 
+
 const app = express();
 const port = 8080;
+const path = require("path");
+
+// Adjust the path based on where your server.js file is located relative to ai-engine
+// If your server.js is in /backend/src, use path.join(__dirname, '../../ai-engine/output')
+app.use('/output', express.static(path.join(__dirname, '../ai-engine/output')));
 
 /* =========================================
    DATABASE
