@@ -21,19 +21,30 @@ export default function CRSLookup() {
   }, []);
 
   async function fetchResults(sts, dNo = drawingNo, sup = supplier, poVal = po) {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ drawingNo: dNo, supplier: sup, po: poVal, status: sts });
-      const res = await api.get(`/api/crs/lookup?${params.toString()}`);
-      const data = res.data;
-      setResults(data.results);
-      setTotal(data.total);
-    } catch (err) {
-      console.error('CRS lookup failed:', err);
-    } finally {
-      setLoading(false);
-    }
+  setLoading(true);
+  try {
+    const params = new URLSearchParams({
+      drawingNo: dNo,
+      supplier: sup,
+      po: poVal,
+      status: sts
+    });
+
+    const res = await fetch(`http://localhost:8080/api/crs/lookup?${params}`, {
+      credentials: "include"
+    });
+
+    const data = await res.json();
+
+    setResults(data.results);
+    setTotal(data.total);
+
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setLoading(false);
   }
+}
 
   function handleStatusChange(value) {
     setStatus(value);
@@ -47,8 +58,10 @@ export default function CRSLookup() {
   async function handleExport() {
     try {
       const params = new URLSearchParams({ drawingNo, supplier, po, status });
-      const res = await api.get(`/api/crs/export?${params.toString()}`, { responseType: 'blob' });
-      const blob = res.data;
+      const res = await fetch(`http://localhost:8080/api/crs/export?${params}`, {
+  credentials: "include"
+});
+const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

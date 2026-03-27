@@ -17,26 +17,29 @@ export default function Dashboard() {
   const [engineers, setEngineers] = useState([]);
 
   useEffect(() => {
-    api.get('/api/dashboard/stats')
-      .then(r => setStats(r.data))
-      .catch(console.error);
+  const fetchData = async () => {
+    try {
+      const [stats, drawings, crs, categories, engineers] = await Promise.all([
+        fetch("http://localhost:8080/api/dashboard/stats", { credentials: "include" }).then(r => r.json()),
+        fetch("http://localhost:8080/api/dashboard/recent-drawings", { credentials: "include" }).then(r => r.json()),
+        fetch("http://localhost:8080/api/dashboard/crs-status", { credentials: "include" }).then(r => r.json()),
+        fetch("http://localhost:8080/api/dashboard/categories", { credentials: "include" }).then(r => r.json()),
+        fetch("http://localhost:8080/api/dashboard/engineer-workload", { credentials: "include" }).then(r => r.json()),
+      ]);
 
-    api.get('/api/dashboard/recent-drawings')
-      .then(r => setDrawings(r.data))
-      .catch(console.error);
+      setStats(stats);
+      setDrawings(drawings);
+      setCrsStatus(crs);
+      setCategories(categories);
+      setEngineers(engineers);
 
-    api.get('/api/dashboard/crs-status')
-      .then(r => setCrsStatus(r.data))
-      .catch(console.error);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
-    api.get('/api/dashboard/categories')
-      .then(r => setCategories(r.data))
-      .catch(console.error);
-
-    api.get('/api/dashboard/engineer-workload')
-      .then(r => setEngineers(r.data))
-      .catch(console.error);
-  }, []);
+  fetchData();
+}, []);
 
   const filteredDrawings = activeTab === 'All'
     ? drawings

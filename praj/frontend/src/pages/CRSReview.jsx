@@ -19,11 +19,27 @@ export default function CRSReview() {
   // Expected engineers: [{ id, name }]
 
   useEffect(() => {
-    const id = drawingNo || 'PRAJ-001';
-    api.get(`/api/crs/drawing/${id}/metadata`).then(r => setMetadata(r.data)).catch(console.error);
-    api.get(`/api/crs/drawing/${id}/comments`).then(r => setTableData(r.data)).catch(console.error);
-    api.get('/api/engineers').then(r => setEngineers(r.data)).catch(console.error);
-  }, [drawingNo]);
+  const id = drawingNo || "PRAJ-001";
+
+  const fetchData = async () => {
+    try {
+      const [meta, comments, engineers] = await Promise.all([
+        fetch(`http://localhost:8080/api/crs/drawing/${id}/metadata`, { credentials: "include" }).then(r => r.json()),
+        fetch(`http://localhost:8080/api/crs/drawing/${id}/comments`, { credentials: "include" }).then(r => r.json()),
+        fetch("http://localhost:8080/api/engineers", { credentials: "include" }).then(r => r.json())
+      ]);
+
+      setMetadata(meta);
+      setTableData(comments);
+      setEngineers(engineers);
+
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  fetchData();
+}, [drawingNo]);
 
   function setField(rowIndex, field, value) {
     setRowEdits(prev => ({ ...prev, [rowIndex]: { ...prev[rowIndex], [field]: value } }));
@@ -41,7 +57,12 @@ export default function CRSReview() {
       evidence:   edits.evidence   ?? row.ev,
     };
     try {
-      await api.patch(`/api/crs/drawing/${drawingNo}/comments/${row.cId}`, payload);
+     await fetch(`http://localhost:8080/api/crs/drawing/${drawingNo}/comments/${row.cId}`, {
+  method: "PATCH",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(payload)
+});
       setTableData(prev => prev.map((r, i) => i === rowIndex ? { ...r, ...payload, res: payload.resolution, ev: payload.evidence } : r));
       setRowEdits(prev => { const n = { ...prev }; delete n[rowIndex]; return n; });
     } catch (err) {
@@ -51,8 +72,11 @@ export default function CRSReview() {
 
   async function handleDownload(format) {
     try {
-      const res = await api.get(`/api/crs/drawing/${drawingNo}/export/${format}`, { responseType: 'blob' });
-      const blob = res.data;
+      const res = await fetch(`http://localhost:8080/api/crs/drawing/${drawingNo}/export/${format}`, {
+  credentials: "include"
+});
+const blob = await res.blob();
+      
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

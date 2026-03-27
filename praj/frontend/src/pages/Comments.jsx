@@ -20,21 +20,29 @@ export default function Comments() {
   }, []);
 
   async function fetchDrawings(sts, dNo = drawingNo, sup = supplier) {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ drawingNo: dNo, supplier: sup, status: sts });
-      const res = await api.get(`/api/drawings?${params.toString()}`);
-      const data = res.data;
-      setDrawings(data.drawings);
-      setTotal(data.total);
-      console.log(res.data);
-      
-    } catch (err) {
-      console.error('Failed to fetch drawings:', err);
-    } finally {
-      setLoading(false);
-    }
+  setLoading(true);
+  try {
+    const params = new URLSearchParams({
+      drawingNo: dNo,
+      supplier: sup,
+      status: sts
+    });
+
+    const res = await fetch(`http://localhost:8080/api/drawings?${params}`, {
+      credentials: "include"
+    });
+
+    const data = await res.json();
+
+    setDrawings(data.drawings);
+    setTotal(data.total);
+
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setLoading(false);
   }
+}
 
   function handleStatusChange(value) {
     setStatus(value);
