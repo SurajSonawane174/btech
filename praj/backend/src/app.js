@@ -39,8 +39,9 @@ app.use("/output", express.static("../ai-engine/output"));
 ========================================= */
 app.use(cors({
   origin: "http://localhost:5173", // React frontend
-  credentials: true               // Allow cookies/session
+  // credentials: true               // Allow cookies/session
 }));
+
 
 /* =========================================
    SESSION

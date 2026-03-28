@@ -133,18 +133,24 @@ module.exports.updateComment = async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!id || isNaN(id)) {
+    if (!id) {
       return res.status(400).json({ message: "Invalid comment id" });
     }
 
-    const {
+    let {
       actual_extracted_comment,
       comment_color,
       comment_category,
       is_client_comment,
-      is_handwritten
+      is_handwritten,
+      assigned_to,
+      target_closure_date,
+      status, 
+
     } = req.body;
 
+
+    assigned_to = 1;
     const clientCommentBool =
       is_client_comment === true || is_client_comment === "Y";
 
@@ -152,14 +158,17 @@ module.exports.updateComment = async (req, res) => {
       is_handwritten === true || is_handwritten === "Y";
 
     await pool.query(
-      `SELECT update_comment($1, $2, $3, $4, $5, $6)`,
+      `SELECT update_comment($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         id,
         actual_extracted_comment,
         comment_color,
         comment_category,
         clientCommentBool,
-        handwrittenBool
+        handwrittenBool,
+        assigned_to,
+        target_closure_date,
+        status,
       ]
     );
 
@@ -177,12 +186,12 @@ module.exports.deleteComment = async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!id || isNaN(id)) {
+    if (!id ) {
       return res.status(400).json({ message: "Invalid comment id" });
     }
 
     await pool.query(
-      `SELECT delete_comment($1::BIGINT)`,
+      `SELECT delete_comment($1::VARCHAR)`,
       [id]
     );
 
