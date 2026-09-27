@@ -1,255 +1,293 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
-import { AlertTriangle, ChevronRight, Folder, MessageCircle, Hourglass, ShieldAlert, FileText } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Folder, MessageCircle, Hourglass, ShieldAlert, FileText, Loader2, TrendingUp } from 'lucide-react';
+import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend, BarChart, Bar
+} from 'recharts';
 
 const TABS = ['All', 'Open', 'In Progress', 'Closed'];
+// const BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+    const BASE_URL = 'http://localhost:8080';
+
+// Chart Colors
+const COLORS = {
+  closed: '#10b981',     // Emerald
+  inProgress: '#f59e0b', // Amber
+  open: '#ef4444',       // Red
+  primary: '#6366f1',    // Indigo
+  secondary: '#818cf8'   // Light Indigo
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('All');
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
+  // Data States
   const [stats, setStats] = useState(null);
   const [drawings, setDrawings] = useState([]);
   const [crsStatus, setCrsStatus] = useState(null);
   const [categories, setCategories] = useState([]);
   const [engineers, setEngineers] = useState([]);
+  const [trends, setTrends] = useState([]); // NEW: Time-series data
 
   useEffect(() => {
-    // Helper function using your exact fetch pattern
-    const fetchDashboardData = (url, setterFunc, label) => {
-      fetch(url)
-        .then(async (res) => {
-          console.log(`${label} STATUS:`, res.status);
-
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(text);
-          }
-
-          return res.json();
-        })
-        .then(data => {
-          console.log(`${label} DATA:`, data);
-          setterFunc(data);
-        })
-        .catch(err => console.error(`${label} FETCH ERROR:`, err));
+    const fetchAPI = async (endpoint) => {
+      const res = await fetch(`${BASE_URL}${endpoint}`);
+      if (!res.ok) throw new Error(`Failed to fetch ${endpoint}`);
+      return res.json();
     };
 
-    const BASE_URL = 'http://localhost:8080';
+    const loadDashboardData = async () => {
+      setIsLoading(true);
+      try {
+        const results = await Promise.allSettled([
+          fetchAPI('/api/documents'),
+          fetchAPI('/api/dashboard/stats'),
+          fetchAPI('/api/dashboard/crs-status'),
+          fetchAPI('/api/dashboard/categories'),
+          fetchAPI('/api/dashboard/engineer-workload'),
+          fetchAPI('/api/dashboard/trends') // New endpoint for the line chart
+        ]);
 
-    // 1. Fetch Drawings and map the new API fields to match the frontend expectations
-    fetch(`${BASE_URL}/api/documents`)
-      .then(async (res) => {
-        console.log("DRAWINGS STATUS:", res.status);
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text);
+        if (results[0].status === 'fulfilled') {
+          setDrawings(results[0].value.map(doc => ({
+            id: doc.praj_document_number || '-', sup: doc.supplier_name || 'Unknown', 
+            po: doc.supplier_po_number || '-', com: doc.comments || '-', 
+            status: doc.status || 'Open', dbId: doc.id
+          })));
         }
-        return res.json();
-      })
-      .then(data => {
-        console.log("DRAWINGS RAW DATA:", data);
+
+        if (results[1].status === 'fulfilled') setStats(results[1].value);
+        if (results[2].status === 'fulfilled') setCrsStatus(results[2].value);
+        if (results[3].status === 'fulfilled') setCategories(results[3].value);
+        if (results[4].status === 'fulfilled') setEngineers(results[4].value);
         
-        // Translate the new backend schema to the old frontend schema
-        const mappedData = data.map(doc => ({
-          id: doc.praj_document_number,   // Maps to DRAWING NO
-          sup: doc.supplier_name,         // Maps to SUPPLIER
-          po: doc.supplier_po_number,     // Maps to PO
-          com: doc.comments || '-',       // Missing from API, adding fallback
-          status: doc.status || 'Open',   // Missing from API, falling back to 'Open' so tabs work
-          dbId: doc.id                    // Saving the actual database ID just in case
-        }));
-
-        setDrawings(mappedData);
-      })
-      .catch(err => console.error("DRAWINGS FETCH ERROR:", err));
-
-    // 2. Fetch all other endpoints normally
-    fetchDashboardData(`${BASE_URL}/api/dashboard/stats`, setStats, 'STATS');
-    fetchDashboardData(`${BASE_URL}/api/dashboard/crs-status`, setCrsStatus, 'CRS_STATUS');
-    fetchDashboardData(`${BASE_URL}/api/dashboard/categories`, setCategories, 'CATEGORIES');
-    fetchDashboardData(`${BASE_URL}/api/dashboard/engineer-workload`, setEngineers, 'ENGINEERS');
-
+        // Handle Trends or use fallback mock data if API isn't ready yet
+        if (results[5].status === 'fulfilled') {
+          setTrends(results[5].value);
+        } else {
+          setTrends([
+            { date: 'Mon', extracted: 120, resolved: 80 },
+            { date: 'Tue', extracted: 180, resolved: 110 },
+            { date: 'Wed', extracted: 250, resolved: 160 },
+            { date: 'Thu', extracted: 210, resolved: 190 },
+            { date: 'Fri', extracted: 290, resolved: 240 },
+            { date: 'Sat', extracted: 140, resolved: 120 },
+            { date: 'Sun', extracted: 90, resolved: 150 },
+          ]);
+        }
+      } catch (err) {
+        setError("Failed to load dashboard data.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadDashboardData();
   }, []);
 
-  const filteredDrawings = activeTab === 'All'
-    ? drawings
-    : drawings.filter(d => d.status === activeTab);
+  const filteredDrawings = activeTab === 'All' ? drawings : drawings.filter(d => d.status === activeTab);
 
-  // stats cards config
-  const statCards = stats ? [
-    { title: "TOTAL DRAWINGS",     count: stats.totalDrawings,     trend: stats.totalDrawingsTrend,     icon: Folder,      color: "text-indigo-600", bg: "bg-indigo-50", line: "bg-indigo-500" },
-    { title: "COMMENTS EXTRACTED", count: stats.commentsExtracted, trend: stats.commentsExtractedTrend, icon: MessageCircle, color: "text-emerald-600", bg: "bg-emerald-50", line: "bg-emerald-500" },
-    { title: "PENDING REVIEWS",    count: stats.pendingReviews,    trend: stats.pendingReviewsTrend,    icon: Hourglass,   color: "text-amber-600",  bg: "bg-amber-50",  line: "bg-amber-500" },
-    { title: "OVERDUE ITEMS",      count: stats.overdueItems,      trend: stats.overdueItemsTrend,      icon: ShieldAlert, color: "text-red-600",    bg: "bg-red-50",    line: "bg-red-500", trendColor: "text-red-500" },
+  const pieData = crsStatus ? [
+    { name: 'Closed', value: crsStatus.closed, color: COLORS.closed },
+    { name: 'In Progress', value: crsStatus.inProgress, color: COLORS.inProgress },
+    { name: 'Open', value: crsStatus.open, color: COLORS.open }
   ] : [];
 
-  const maxEngCount = engineers.length ? Math.max(...engineers.map(e => e.count)) : 1;
+  if (isLoading) return (
+    <Layout><div className="flex flex-col items-center justify-center h-[80vh] text-slate-500"><Loader2 className="w-8 h-8 animate-spin mb-4 text-indigo-600" /><p>Loading analytics...</p></div></Layout>
+  );
 
   return (
     <Layout>
-      <div className="p-8 max-w-7xl mx-auto space-y-6">
+      <div className="p-8 max-w-[1400px] mx-auto space-y-6 bg-slate-50 min-h-screen">
+        
+        {/* Header & Alerts */}
+        <div className="flex justify-between items-end mb-2">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800">Overview Dashboard</h1>
+            <p className="text-sm text-slate-500">Real-time comment extraction and CRS performance.</p>
+          </div>
+        </div>
 
-        {/* Alert Banner */}
+        {error && <div className="bg-red-50 text-red-600 p-4 rounded-lg">{error}</div>}
+        
         {stats?.overdueItems > 0 && (
-          <div className="bg-red-50 border border-red-100 rounded-lg p-3 flex items-center justify-between text-red-700">
-            <div className="flex items-center gap-2 text-sm">
-              <AlertTriangle size={18} className="text-red-500" />
-              <span className="font-semibold text-red-600">{stats.overdueItems} overdue</span> CRS items — target dates have passed and need immediate resolution.
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between shadow-sm">
+            <div className="flex items-center gap-3">
+              <ShieldAlert className="text-red-500" size={24} />
+              <div>
+                <h4 className="font-bold text-red-800 text-sm">Action Required</h4>
+                <p className="text-sm text-red-600"><span className="font-bold">{stats.overdueItems}</span> CRS items are overdue.</p>
+              </div>
             </div>
-            <button onClick={() => navigate('/notifications')} className="text-sm font-medium text-red-600 hover:text-red-800 flex items-center gap-1">
-              View Overdue <ChevronRight size={16} />
+            <button onClick={() => navigate('/notifications')} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors">
+              Review Overdue
             </button>
           </div>
         )}
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-4 gap-4">
-          {statCards.map((stat, i) => (
-            <div key={i} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
-              <div className={`absolute top-0 left-0 w-full h-1 ${stat.line}`}></div>
-              <div className="flex justify-between items-start mb-4">
-                <p className="text-[11px] font-bold text-slate-500 tracking-wider">{stat.title}</p>
-                <div className={`p-2 rounded-lg ${stat.bg} ${stat.color}`}><stat.icon size={16} /></div>
+        {/* Top KPIs */}
+        <div className="grid grid-cols-4 gap-6">
+          {[
+            { title: "TOTAL DRAWINGS", val: stats?.totalDrawings, icon: Folder, color: "text-indigo-600", bg: "bg-white", border: "border-indigo-100" },
+            { title: "COMMENTS EXTRACTED", val: stats?.commentsExtracted, icon: MessageCircle, color: "text-emerald-600", bg: "bg-white", border: "border-emerald-100" },
+            { title: "PENDING REVIEWS", val: stats?.pendingReviews, icon: Hourglass, color: "text-amber-600", bg: "bg-white", border: "border-amber-100" },
+            { title: "OVERDUE ITEMS", val: stats?.overdueItems, icon: AlertTriangle, color: "text-red-600", bg: "bg-white", border: "border-red-100" }
+          ].map((stat, i) => (
+            <div key={i} className={`bg-white p-6 rounded-2xl border ${stat.border} shadow-sm flex items-center gap-4`}>
+              <div className={`p-4 rounded-xl ${stat.color} bg-slate-50 border border-slate-100`}><stat.icon size={24} /></div>
+              <div>
+                <p className="text-[11px] font-bold text-slate-500 tracking-wider mb-1">{stat.title}</p>
+                <h3 className="text-3xl font-extrabold text-slate-800">{stat.val || 0}</h3>
               </div>
-              <h3 className="text-3xl font-bold text-slate-800 mb-1">{stat.count}</h3>
-              <p className={`text-xs ${stat.trendColor || 'text-emerald-500'} flex items-center gap-1 font-medium`}>↑ {stat.trend}</p>
             </div>
           ))}
         </div>
 
-        {/* Main Content Grid (Table + Charts) */}
+        {/* Middle Section: Trends & Donut */}
         <div className="grid grid-cols-3 gap-6">
+          {/* Trend Chart (Spans 2 columns) */}
+          <div className="col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <div className="flex items-center gap-2 mb-6">
+              <TrendingUp className="text-indigo-500" size={20} />
+              <h3 className="font-bold text-slate-800">Extraction vs Resolution Trend</h3>
+            </div>
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trends} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorExtracted" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.primary} stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor={COLORS.primary} stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="colorResolved" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.closed} stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor={COLORS.closed} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748b' }} />
+                  <RechartsTooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                  <Legend verticalAlign="top" height={36} iconType="circle" />
+                  <Area type="monotone" dataKey="extracted" name="Comments Extracted" stroke={COLORS.primary} strokeWidth={3} fillOpacity={1} fill="url(#colorExtracted)" />
+                  <Area type="monotone" dataKey="resolved" name="Comments Resolved" stroke={COLORS.closed} strokeWidth={3} fillOpacity={1} fill="url(#colorResolved)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
 
-          {/* Left Column (Table) */}
-          <div className="col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <FileText size={18} className="text-slate-400" />
-                <h3 className="font-semibold text-slate-800">Recent Drawings</h3>
-                <span className="bg-indigo-50 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full font-semibold">{filteredDrawings.length} shown</span>
+          {/* Real Donut Chart */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col">
+            <h3 className="font-bold text-slate-800 mb-2">Overall CRS Status</h3>
+            <p className="text-xs text-slate-500 mb-4">Current state of all extracted comments.</p>
+            <div className="flex-1 min-h-[250px] relative">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} innerRadius={70} outerRadius={100} paddingAngle={5} dataKey="value" stroke="none">
+                    {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                  </Pie>
+                  <RechartsTooltip formatter={(value) => [`${value} Comments`, 'Count']} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                </PieChart>
+              </ResponsiveContainer>
+              {/* Center Text inside Donut */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-3xl font-extrabold text-slate-800">{crsStatus?.total || 0}</span>
+                <span className="text-xs text-slate-400 font-medium">Total</span>
               </div>
-              <button onClick={() => navigate('/comments')} className="text-xs text-indigo-600 font-medium hover:text-indigo-800">
-                View All →
-              </button>
+            </div>
+            
+            {/* Custom Legend */}
+            <div className="grid grid-cols-3 gap-2 mt-4 text-center border-t border-slate-100 pt-4">
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Closed</p>
+                <p className="text-lg font-bold text-emerald-600">{crsStatus?.closed || 0}</p>
+              </div>
+              <div className="border-x border-slate-100">
+                <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">In Prog</p>
+                <p className="text-lg font-bold text-amber-600">{crsStatus?.inProgress || 0}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Open</p>
+                <p className="text-lg font-bold text-red-600">{crsStatus?.open || 0}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Section: Workload & Table */}
+        <div className="grid grid-cols-3 gap-6">
+          
+          {/* Engineer Bar Chart */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h3 className="font-bold text-slate-800 mb-6">Workload by Engineer</h3>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={engineers} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                  <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} />
+                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#475569', fontWeight: 500 }} width={80} />
+                  <RechartsTooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                  <Bar dataKey="count" name="Assigned Tasks" fill={COLORS.primary} radius={[0, 4, 4, 0]} barSize={24} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Recent Drawings Table */}
+          <div className="col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col h-[400px]">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <h3 className="font-bold text-slate-800 flex items-center gap-2"><FileText size={18} className="text-indigo-500"/> Recent Document Processing</h3>
+              <button onClick={() => navigate('/comments')} className="text-sm text-indigo-600 font-bold hover:text-indigo-800">View Master List →</button>
             </div>
 
-            {/* Tabs */}
-            <div className="px-5 border-b border-slate-100 flex gap-6 text-sm">
+            <div className="flex gap-1 p-2 bg-white border-b border-slate-100">
               {TABS.map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`py-3 transition-colors ${activeTab === tab ? 'text-indigo-600 border-b-2 border-indigo-600 font-medium' : 'text-slate-500 hover:text-slate-800'}`}
-                >
+                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === tab ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}>
                   {tab}
                 </button>
               ))}
             </div>
 
-            {/* Table */}
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 text-xs text-slate-500 border-b border-slate-100">
-                  <th className="p-4 font-medium">DRAWING NO</th>
-                  <th className="p-4 font-medium">SUPPLIER</th>
-                  <th className="p-4 font-medium">PO</th>
-                  <th className="p-4 font-medium">COMMENTS</th>
-                  <th className="p-4 font-medium">STATUS</th>
-                </tr>
-              </thead>
-              <tbody className="text-sm">
-                {filteredDrawings.length === 0 ? (
-                  <tr><td colSpan={5} className="p-6 text-center text-slate-400 text-xs">No drawings found for this status.</td></tr>
-                ) : filteredDrawings.map((row, i) => (
-                  <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer" onClick={() => navigate(`/crs-review/${row.id}`)}>
-                    <td className="p-4 text-indigo-600 font-medium">{row.id}</td>
-                    <td className="p-4 text-slate-600">{row.sup}</td>
-                    <td className="p-4 text-slate-600">{row.po}</td>
-                    <td className="p-4 text-slate-800 font-medium">{row.com}</td>
-                    <td className="p-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
-                        row.status === 'Open' ? 'bg-red-50 text-red-600 border-red-100' :
-                        row.status === 'In Progress' ? 'bg-amber-50 text-amber-600 border-amber-100' :
-                        'bg-emerald-50 text-emerald-600 border-emerald-100'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${row.status === 'Open' ? 'bg-red-500' : row.status === 'In Progress' ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
-                        {row.status}
-                      </span>
-                    </td>
+            <div className="overflow-auto flex-1">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 bg-white shadow-sm z-10">
+                  <tr className="text-xs text-slate-400 font-bold uppercase tracking-wider">
+                    <th className="p-4">Drawing No</th>
+                    <th className="p-4">Supplier</th>
+                    <th className="p-4 text-center">Comments</th>
+                    <th className="p-4 text-right">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Right Column (Charts) */}
-          <div className="space-y-6">
-            {/* CRS Status */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <h3 className="font-semibold text-slate-800 flex items-center gap-2 mb-6">
-                <span className="w-3 h-3 rounded-full bg-amber-700"></span> CRS Status
-              </h3>
-              {crsStatus && (
-                <div className="flex items-center justify-center gap-6">
-                  <div className="relative w-32 h-32 rounded-full border-[12px] border-emerald-500 border-l-red-500 border-b-amber-500 flex items-center justify-center">
-                    <div className="text-center">
-                      <span className="block text-xl font-bold text-slate-800">{crsStatus.total?.toLocaleString()}</span>
-                      <span className="block text-[10px] text-slate-400">Total</span>
-                    </div>
-                  </div>
-                  <div className="space-y-3 text-xs">
-                    <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500"></span><span className="text-slate-600">Closed</span><span className="font-semibold text-slate-800 ml-auto">{crsStatus.closed?.toLocaleString()}</span></div>
-                    <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-amber-500"></span><span className="text-slate-600">In Progress</span><span className="font-semibold text-slate-800 ml-auto">{crsStatus.inProgress?.toLocaleString()}</span></div>
-                    <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500"></span><span className="text-slate-600">Open</span><span className="font-semibold text-slate-800 ml-auto">{crsStatus.open?.toLocaleString()}</span></div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* By Category */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-              <h3 className="font-semibold text-slate-800 flex items-center gap-2 mb-4">
-                <span className="w-3 h-3 rounded bg-amber-200 rotate-45"></span> By Category
-              </h3>
-              <div className="space-y-4">
-                {categories.map((item, i) => (
-                  <div key={i} className="flex items-center text-xs">
-                    <span className="w-24 text-slate-600">{item.label}</span>
-                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden mr-3">
-                      <div className={`h-full ${item.width} ${item.color} rounded-full`}></div>
-                    </div>
-                    <span className="text-slate-400 w-10 text-right">{item.value}</span>
-                  </div>
-                ))}
-              </div>
+                </thead>
+                <tbody className="text-sm">
+                  {filteredDrawings.map((row, i) => (
+                    <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 cursor-pointer" onClick={() => navigate(`/crs-review/${row.dbId}`)}>
+                      <td className="p-4 font-bold text-slate-700">{row.id}</td>
+                      <td className="p-4 text-slate-500">
+                        <div className="font-medium text-slate-800">{row.sup}</div>
+                        <div className="text-[11px]">PO: {row.po}</div>
+                      </td>
+                      <td className="p-4 text-center font-bold text-indigo-600">{row.com}</td>
+                      <td className="p-4 text-right">
+                        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                          row.status === 'Open' ? 'bg-red-50 text-red-700' :
+                          row.status === 'In Progress' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
+                        }`}>
+                          {row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
+
         </div>
-
-        {/* Engineer Workload */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-          <div className="flex items-center gap-2 mb-6 border-b border-slate-100 pb-4">
-            <span className="text-xl">👷</span>
-            <h3 className="font-semibold text-slate-800">Engineer Workload</h3>
-            <span className="bg-indigo-50 text-indigo-600 text-[10px] px-2 py-0.5 rounded-full font-semibold ml-2">{engineers.length} engineers</span>
-          </div>
-
-          <div className="grid gap-6 divide-x divide-slate-100" style={{ gridTemplateColumns: `repeat(${engineers.length || 1}, minmax(0, 1fr))` }}>
-            {engineers.map((eng, i) => (
-              <div key={i} className={i !== 0 ? "pl-6" : ""}>
-                <p className="text-[10px] font-bold text-slate-400 tracking-wider mb-2">{eng.name}</p>
-                <p className="text-2xl font-bold text-slate-800 mb-3">{eng.count}</p>
-                <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden mb-2">
-                  <div className={`h-full bg-indigo-500 rounded-full`} style={{ width: `${Math.round((eng.count / maxEngCount) * 100)}%` }}></div>
-                </div>
-                <p className="text-[10px] text-slate-400">tasks assigned</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
       </div>
     </Layout>
   );

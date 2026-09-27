@@ -60,7 +60,7 @@ export default function Sidebar({ isOpen }) {
             <FileText size={18} />
           </div>
           <div>
-            <h1 className="text-white font-extrabold text-lg tracking-wide drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]">Praj</h1>
+            <h1 className="text-white font-extrabold text-lg tracking-wide drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]">Comment Extractor</h1>
             <p className="text-[10px] text-cyan-400 font-medium tracking-widest uppercase">Workspace</p>
           </div>
         </div>

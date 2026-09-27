@@ -42,11 +42,16 @@ export const drawingController = (req, res) => {
     const nameParts = fileName.split("_");
     const req_project_number = nameParts[0] || "UNKNOWN_PRJ"; 
 
-    const baseDir = path.resolve(__dirname, "../../../ai-engine");
-    const pythonPath = path.join(baseDir, ".venv/bin/python");
+const baseDir = path.resolve(__dirname, "../../../ai-engine");
+    
+    // 1. Use standard system 'python' (or 'python3' if you are on Mac/Linux)
+    const pythonPath = "python3"; 
+    
     const scriptPath = path.join(baseDir, "doc_process.py");
+    const configPath = path.join(baseDir, "config.yaml");
 
-    const command = `"${pythonPath}" "${scriptPath}" --input "${filePath}"`;
+    // 2. Add the --config flag to match your terminal command
+    const command = `${pythonPath} "${scriptPath}" --input "${filePath}" --config "${configPath}"`;
 
     exec(command, { cwd: baseDir }, async (error, stdout, stderr) => {
 

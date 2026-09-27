@@ -10,6 +10,7 @@ const userRoutes = require("./routes/userRoutes");
 const documentRoutes = require("./routes/documentRoutes");
 const commentRoutes = require("./routes/commentRoutes");
 const drawingRoutes = require("./routes/drawingRoutes")
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 
 const app = express();
@@ -39,7 +40,7 @@ app.use("/output", express.static("../ai-engine/output"));
 ========================================= */
 app.use(cors({
   origin: "http://localhost:5173", // React frontend
-  // credentials: true               // Allow cookies/session
+  credentials: true               // Allow cookies/session
 }));
 
 
@@ -120,6 +121,8 @@ app.use("/api/users", userRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/comments", commentRoutes);
 app.use("/api/drawings", drawingRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+
 
 
 /* =========================================

@@ -1,50 +1,68 @@
-# ============================================================
-# Engineering Comment Extraction & Classification Platform
-# AI Engine Configuration
-# ============================================================
+# CEMS - OpenRouter full 40-PDF test configuration
+# Put ONLY your OpenRouter key in .env:
+# OPENROUTER_API_KEY=sk-or-v1-...
 
-# ---- OCR Settings ----
-ocr:
-  enabled: true               # Set to false to skip scanned pages entirely
-  dpi: 300                    # Render DPI for OCR. Higher = better quality but slower.
-                              #   - 300: Standard engineering drawings
-                              #   - 400: Fine print or degraded scans
-                              #   - 600: High-detail drawings (slow, high memory)
-  language: "eng"             # Tesseract language code.
-                              #   - "eng" for English
-                              #   - "eng+fra" for English + French
-  psm: 6                      # Tesseract Page Segmentation Mode
-                              #   - 6: Assume uniform block of text (default for engineering)
-                              #   - 3: Fully automatic (use for irregular notes)
-                              #   - 11: Sparse text, no OSD
-  confidence_threshold: 50   # Minimum word confidence % to include (0–100)
-                              #   Lower = more text captured but noisier results
+llm:
+  base_url: "https://openrouter.ai/api/v1"
+  model: "google/gemma-4-31b-it:free"
+  api_key_env: "OPENROUTER_API_KEY"
 
-# ---- Screenshot Settings ----
-screenshot:
-  margin: 1.15                # Expansion factor around annotation bounding box
-                              #   - 1.15 = 15% padding on each side (spec default)
-                              #   - 1.50 = 50% padding for more context
-  min_width: 200              # Minimum screenshot width in pixels
-  min_height: 150             # Minimum screenshot height in pixels
+  # Keep non-vision LLM work off for the large test run.
+  # Set true later if you want title-block LLM extraction.
+  metadata_enabled: false
 
-# ---- Classification Settings ----
+  batch_size: 40
+  max_workers: 1
+  timeout: 120
+  max_retries: 1
+
 classification:
-  similarity_threshold: 90   # RapidFuzz ratio threshold for "repeated" detection (0–100)
-                              #   - 90: Strict (only near-identical comments flagged)
-                              #   - 80: Relaxed (more comments flagged as repeated)
-  gemini_model: "gemini-2.0-flash-lite"    # Gemini model to use
-                                     # Options:
-                                     #   - gemini-2.0-flash      (fast, cost-effective — recommended)
-                                     #   - gemini-2.0-flash-lite (cheapest)
-                                     #   - gemini-1.5-pro        (highest accuracy, older)
+  # Rule-based classification is used for the full test to avoid unnecessary LLM calls.
+  llm_enabled: false
+  similarity_threshold: 90
 
-# ---- Unique ID Settings ----
+title_block:
+  region: [0.5, 0.7, 1.0, 1.0]
+
 uid:
-  row_density: 80             # Grid rows per page for UID row calculation (60–100)
-                              #   Higher = finer position granularity
+  row_density: 80
 
-# ---- Page Type Detection ----
-scanned_text_threshold: 50   # Characters threshold: pages with fewer chars are treated
-                              # as SCANNED and sent through OCR
-                              # Increase if vector pages are wrongly classified as scanned
+screenshot:
+  margin: 1.15
+  min_width: 200
+  min_height: 150
+  dpi: 150
+
+vision:
+  enabled: true
+
+  # IMPORTANT: all PDFs are processed, but only this many PDFs are allowed
+  # to make vision-LLM requests.
+  max_pdfs: 15
+
+  # OpenRouter multimodal model.
+  model: "google/gemma-4-31b-it:free"
+  base_url: "https://openrouter.ai/api/v1"
+  api_key_env: "OPENROUTER_API_KEY"
+
+  # Local candidate detection happens first; only detected boxes are sent to the model.
+  mode: "generic"
+  render_dpi: 200
+  box_min_width_pt: 100
+  box_min_height_pt: 50
+  dilate_px: 4
+
+  # Generic color-box detector settings.
+  min_spread: 25
+  min_value: 50
+  max_area_fraction: 0.18
+  min_fill_density: 0.25
+
+  # Used only if mode is changed to palette.
+  color_tolerance: 40
+  colors:
+    Yellow: [255, 230, 101]
+    Blue: [180, 230, 255]
+    Red: [254, 200, 200]
+    Purple: [230, 200, 254]
+    Green: [200, 255, 200]
