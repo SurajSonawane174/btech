@@ -1,0 +1,8 @@
+﻿.env
+.venv/
+__pycache__/
+*.py[cod]
+output/
+*.log
+
+input/*.pdf
