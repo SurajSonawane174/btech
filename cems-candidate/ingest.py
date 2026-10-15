@@ -177,6 +177,7 @@ def ingest_dataframe(df: pd.DataFrame, source_label: str, allow_unresolved: bool
             embed_items.append({
                 "comment_id": c["id"], "vector": vector, "text": text,
                 "category": c["comment_category"], "project_id": project_id, "revision_id": revision_id,
+                "document_id": document_id, "comment_uid": c.get("comment_uid"),
             })
         if embed_items:
             try:

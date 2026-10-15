@@ -292,17 +292,40 @@ def mark_comments_embedded(comment_ids: List[str]) -> None:
         )
 
 
+def get_comment_context(comment_id: str) -> Optional[Dict]:
+    """Where a comment lives (revision, document, project) -- used to scope retrieval and to
+    exclude the comment's own revision from its 'historical' matches. Read-only."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.id AS comment_id, c.comment_uid, c.revision_id, r.document_id, d.project_id
+            FROM comments c
+            JOIN revisions r ON r.id = c.revision_id
+            JOIN documents d ON d.id = r.document_id
+            WHERE c.id = %s::uuid
+            """,
+            (comment_id,),
+        )
+        row = cur.fetchone()
+        return {k: (str(v) if v is not None else None) for k, v in dict(row).items()} if row else None
+
+
 def get_resolution_history_for(comment_ids: List[str]) -> List[Dict]:
+    """
+    Human-decided resolutions of the given comments, newest first. Unreviewed AI suggestions
+    (source = 'ai_suggested') are EXCLUDED: feeding the system's own unapproved drafts back in
+    as "how this was resolved before" would be circular evidence.
+    """
     if not comment_ids:
         return []
     with get_cursor() as cur:
         cur.execute(
             """
-            SELECT c.id AS comment_id, c.actual_extracted_comment,
-                   r.resolution_text, r.resolved_by, r.resolved_at
+            SELECT c.id AS comment_id, c.actual_extracted_comment, c.revision_id,
+                   r.resolution_text, r.resolved_by, r.resolved_at, r.source
             FROM comments c
             JOIN resolutions r ON r.comment_id = c.id
-            WHERE c.id = ANY(%s::uuid[])
+            WHERE c.id = ANY(%s::uuid[]) AND r.source <> 'ai_suggested'
             ORDER BY r.resolved_at DESC
             """,
             (comment_ids,),
@@ -330,10 +353,13 @@ def insert_resolution(comment_id: str, resolution_text: str, resolved_by: str = 
 
         resolution_id = str(cur.fetchone()["id"])
 
-        cur.execute(
-            "UPDATE comments SET status = 'resolved' WHERE id = %s",
-            (comment_id,),
-        )
+        # An AI suggestion is a draft awaiting human review: recording it must never resolve
+        # the comment (hard rule 3). Only a human decision changes the status.
+        if source != "ai_suggested":
+            cur.execute(
+                "UPDATE comments SET status = 'resolved' WHERE id = %s",
+                (comment_id,),
+            )
 
         return resolution_id
 
@@ -405,21 +431,33 @@ def get_or_create_standards_document(title: str, code_reference: str, discipline
 
 
 def insert_standards_chunks_bulk(document_id: str, chunks: List[Dict]) -> int:
+    """Idempotent: a chunk already stored for this document with the same index, section and
+    text is skipped, so re-running the seed no longer duplicates every clause (duplicates were
+    retrieved as if they were independent evidence). Returns the number actually inserted."""
     if not chunks:
         return 0
-    rows = [(document_id, c["chunk_index"], c["chunk_text"], c.get("page_number"),
-              c.get("section_reference")) for c in chunks]
     with get_cursor(commit=True) as cur:
-        psycopg2.extras.execute_values(
-            cur,
-            """
-            INSERT INTO standards_chunks
-                (standards_document_id, chunk_index, chunk_text, page_number, section_reference)
-            VALUES %s
-            """,
-            rows,
-        )
-        return cur.rowcount
+        cur.execute("SELECT count(*) AS n FROM standards_chunks WHERE standards_document_id = %s",
+                    (document_id,))
+        before = cur.fetchone()["n"]
+        for c in chunks:
+            cur.execute(
+                """
+                INSERT INTO standards_chunks
+                    (standards_document_id, chunk_index, chunk_text, page_number, section_reference)
+                SELECT %s, %s, %s, %s, %s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM standards_chunks
+                    WHERE standards_document_id = %s AND chunk_index = %s
+                      AND chunk_text = %s AND section_reference IS NOT DISTINCT FROM %s)
+                """,
+                (document_id, c["chunk_index"], c["chunk_text"], c.get("page_number"),
+                 c.get("section_reference"),
+                 document_id, c["chunk_index"], c["chunk_text"], c.get("section_reference")),
+            )
+        cur.execute("SELECT count(*) AS n FROM standards_chunks WHERE standards_document_id = %s",
+                    (document_id,))
+        return cur.fetchone()["n"] - before
 
 
 def get_unembedded_standards_chunks(limit: int = 500) -> List[Dict]:
@@ -457,9 +495,11 @@ def log_rag_trace(comment_id: Optional[str], original_query: str, decomposed_sub
             INSERT INTO rag_query_traces (
                 comment_id, original_query, decomposed_subqueries, retrieval_hops,
                 faithfulness_passed, faithfulness_notes, final_answer, cited_chunk_ids
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::uuid[])
             RETURNING id
             """,
+            # ::uuid[] -- psycopg2 sends a Python list of str as text[]; without the cast every
+            # trace insert failed with a type error (caught upstream, so traces were silently lost)
             (comment_id, original_query, decomposed_subqueries, json.dumps(retrieval_hops),
              faithfulness_passed, faithfulness_notes, final_answer, cited_chunk_ids),
         )

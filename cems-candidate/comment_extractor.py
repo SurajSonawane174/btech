@@ -41,6 +41,8 @@ import numpy as np
 import pandas as pd
 import yaml
 from dotenv import load_dotenv
+
+from config_utils import parse_bool
 from openai import OpenAI
 from rapidfuzz import fuzz, process
 from scipy import ndimage
@@ -149,8 +151,9 @@ class Config:
             llm_max_workers=llm.get("max_workers", 4),
             llm_timeout=llm.get("timeout", 90),
             llm_max_retries=llm.get("max_retries", 2),
-            metadata_llm_enabled=llm.get("metadata_enabled", True),
-            classification_llm_enabled=y.get("classification", {}).get("llm_enabled", False),
+            metadata_llm_enabled=parse_bool(llm.get("metadata_enabled"), True, "llm.metadata_enabled"),
+            classification_llm_enabled=parse_bool(y.get("classification", {}).get("llm_enabled"), False,
+                                                  "classification.llm_enabled"),
             vision_max_pdfs=vis.get("max_pdfs", 5),
             title_block_region=tuple(y.get("title_block", {}).get("region", [0.5, 0.7, 1.0, 1.0])),
             similarity_threshold=y.get("classification", {}).get("similarity_threshold", 90),
@@ -159,7 +162,7 @@ class Config:
             screenshot_min_height=shot.get("min_height", 150),
             screenshot_dpi=shot.get("dpi", 150),
             row_density=y.get("uid", {}).get("row_density", 80),
-            vision_enabled=vis.get("enabled", False),
+            vision_enabled=parse_bool(vis.get("enabled"), False, "vision.enabled"),
             vision_mode=vis.get("mode", "generic"),
             vision_model=vis.get("model", llm["model"]),
             vision_base_url=vis.get("base_url", llm["base_url"]),
@@ -175,15 +178,15 @@ class Config:
             vision_color_tolerance=vis.get("color_tolerance", 40),
             vision_colors=colors,
             vision_box_reader=vis.get("box_reader", "llm"),
-            ocr_enabled=ocr.get("enabled", False),
+            ocr_enabled=parse_bool(ocr.get("enabled"), False, "ocr.enabled"),
             ocr_model=ocr.get("model", "lightonai/LightOnOCR-2-1B"),
             ocr_api_key_env=ocr.get("api_key_env", "HF_TOKEN"),
             ocr_dpi=ocr.get("dpi", 150),
             ocr_max_new_tokens=ocr.get("max_new_tokens", 2048),
             ocr_device=ocr.get("device", "auto"),
-            ocr_full_page=ocr.get("full_page", False),
-            ocr_llm_filter=ocr.get("llm_filter", True),
-            enrichment_enabled=enr.get("enabled", False),
+            ocr_full_page=parse_bool(ocr.get("full_page"), False, "ocr.full_page"),
+            ocr_llm_filter=parse_bool(ocr.get("llm_filter"), True, "ocr.llm_filter"),
+            enrichment_enabled=parse_bool(enr.get("enabled"), False, "enrichment.enabled"),
             enrichment_max_comments=enr.get("max_comments", 50),
         )
 
@@ -1004,13 +1007,20 @@ def classify_batch(llm: LLMClient, batch: List[Tuple[int, str]]) -> Dict[int, Tu
         f"Comments:\n{json.dumps(payload, ensure_ascii=False)}"
     )
     out: Dict[int, Tuple[str, str]] = {}
+    allowed = {i for i, _ in batch}
     try:
         data = llm.chat_json(CLASSIFY_SYSTEM, user)
         rows = data.get("results", []) if isinstance(data, dict) else data
-        for row in rows:
-            cat = str(row.get("category", "")).lower().strip()
-            if cat in VALID_CATEGORIES:
-                out[int(row["id"])] = (cat, "llm")
+        for row in rows if isinstance(rows, list) else []:
+            try:
+                rid = int(row["id"])
+                cat = str(row.get("category", "")).lower().strip()
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue                      # one malformed row must not discard the others
+            # only ids of THIS batch: a hallucinated/foreign id would otherwise overwrite
+            # a comment belonging to another batch (batches run in parallel)
+            if rid in allowed and rid not in out and cat in VALID_CATEGORIES:
+                out[rid] = (cat, "llm")
     except Exception as e:
         logger.warning(f"Classification call failed, using rule-based fallback: {e}")
 
@@ -1024,15 +1034,18 @@ def classify_document(comments: List[Dict], llm: LLMClient, cfg: Config) -> None
     """Fills comment['category'] and comment['method'] in place."""
     # Stage 1: repeats across the whole document (first occurrence is kept as the original)
     seen: List[str] = []
+    seen_idx: List[int] = []
     pending: List[int] = []
     for idx, c in enumerate(comments):
         norm = c["text"].lower().strip()
-        if seen and process.extractOne(
-            norm, seen, scorer=fuzz.ratio, score_cutoff=cfg.similarity_threshold
-        ):
+        match = process.extractOne(norm, seen, scorer=fuzz.ratio,
+                                   score_cutoff=cfg.similarity_threshold) if seen else None
+        if match:
             c["category"], c["method"] = "repeated", "similarity"
+            c["duplicate_of_idx"] = seen_idx[match[2]]          # index of the first occurrence
         else:
             seen.append(norm)
+            seen_idx.append(idx)
             pending.append(idx)
 
     # Stage 2: optional LLM, page by page, chunked
@@ -1221,7 +1234,7 @@ COLUMNS = [
     "visual_feature",
     # identity / provenance (appended so column order of existing fields is unchanged)
     "position_key", "drawing_number_source", "revision_source", "source_file_sha256",
-    "metadata_notes",
+    "metadata_notes", "duplicate_of",
 ]
 
 # Extraction path -> the old fixed score. Native and hosted-vision values are kept as they
@@ -1333,6 +1346,7 @@ def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_al
         records: List[Dict] = []
         enriched = 0
         page_sequences: Dict[int, int] = {}
+        uids: List[str] = []                      # index-aligned with `comments`
         for n, c in enumerate(tqdm(comments, desc=pdf_path.stem, leave=False), start=1):
             page_no = c["page"]
             page_sequences[page_no] = page_sequences.get(page_no, 0) + 1
@@ -1342,6 +1356,7 @@ def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_al
                 meta, page_no, c["rect"].y0, page.rect.height,
                 page_seq, cfg, source_hash
             )
+            uids.append(uid)
             shot = capture_screenshot(page, c, uid, img_dir, cfg)
             is_client = "N" if c["author"].lower() in ("praj", "internal", "unknown", "") else "Y"
             is_handwritten, visual_feature = "N", ""
@@ -1379,6 +1394,7 @@ def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_al
                 "revision_source": meta["revision_source"],
                 "source_file_sha256": source_hash,
                 "metadata_notes": "; ".join(meta.get("metadata_notes", [])),
+                "duplicate_of": uids[c["duplicate_of_idx"]] if "duplicate_of_idx" in c else "",
             })
     finally:
         doc.close()

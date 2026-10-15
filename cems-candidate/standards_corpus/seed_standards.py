@@ -21,6 +21,9 @@ from vectordb import qdrant_client as vdb
 from vectordb import embedder
 
 # [PLACEHOLDER CONTENT — swap for real PRAJ standards before production use]
+# Every chunk is stored in Qdrant with corpus_status = CORPUS_STATUS; the RAG result and the
+# recommender report it, so a demo can never present these paraphrases as authoritative.
+CORPUS_STATUS = "illustrative_placeholder"
 PLACEHOLDER_STANDARDS = [
     {
         "title": "AWS D1.1 — Structural Welding Code (illustrative excerpt)",
@@ -81,7 +84,7 @@ def seed():
             {"chunk_index": i, "chunk_text": c["chunk_text"], "section_reference": c["section_reference"]}
             for i, c in enumerate(std["chunks"])
         ]
-        db.insert_standards_chunks_bulk(doc_id, chunk_records)
+        inserted = db.insert_standards_chunks_bulk(doc_id, chunk_records)   # idempotent
 
         # Embed + push to Qdrant
         unembedded = db.get_unembedded_standards_chunks(limit=100)
@@ -92,6 +95,7 @@ def seed():
                 "chunk_id": chunk["id"], "vector": vector, "text": chunk["chunk_text"],
                 "code_reference": chunk["code_reference"], "section_reference": chunk["section_reference"],
                 "title": chunk["title"],
+                "corpus_status": CORPUS_STATUS,
             })
             chunk_ids.append(chunk["id"])
         if items:
@@ -99,7 +103,7 @@ def seed():
             db.mark_standards_chunks_embedded(chunk_ids)
             total_chunks += len(items)
 
-        print(f"Seeded {std['code_reference']}: {len(std['chunks'])} chunks")
+        print(f"Seeded {std['code_reference']}: {inserted} new of {len(std['chunks'])} chunks")
 
     print(f"\nTotal chunks embedded: {total_chunks}")
     print("REMINDER: this is placeholder content — swap for PRAJ's real standards before production use.")

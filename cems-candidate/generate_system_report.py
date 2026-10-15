@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from xml.sax.saxutils import escape as _esc
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -132,6 +133,10 @@ def check_agentic_rag():
         "faithfulness_passed": result["faithfulness_passed"],
         "faithfulness_notes": result["faithfulness_notes"],
         "hops": result["hops"],
+        "verified": result.get("verified", False),
+        "evidence_status": result.get("evidence_status", "unknown"),
+        "corpus_status": result.get("corpus_status", "unknown"),
+        "citation_check": result.get("citation_check", {}),
     }
 
 
@@ -159,6 +164,7 @@ def check_recommender():
             "comment": comment, "draft": r["draft_resolution"],
             "basis": r["basis"], "confidence": r["confidence_percent"],
             "n_similar": len(r["similar_comments"]),
+            "status": r.get("status"), "uncertainty": r.get("uncertainty", []),
         })
     return rows
 
@@ -277,18 +283,26 @@ story.append(Paragraph(
 sec = results.get("agentic_rag", {})
 if sec.get("status") == "ok":
     d = sec["data"]
-    story.append(Paragraph(f"<b>Comment:</b> {d['comment']}", body))
+    story.append(Paragraph(f"<b>Comment:</b> {_esc(d['comment'])}", body))
     story.append(Paragraph(f"<b>Retrieval hops:</b> {len(d['hops'])}", body))
     for hop in d["hops"]:
         story.append(Paragraph(
-            f"&nbsp;&nbsp;Hop {hop['hop']}: \u201c{hop['query']}\u201d "
+            f"&nbsp;&nbsp;Hop {hop['hop']}: \u201c{_esc(str(hop['query']))}\u201d "
             f"\u2192 {hop['chunks_retrieved']} chunk(s) retrieved", body))
-    story.append(Paragraph(f"<b>Synthesized answer:</b> {d['answer']}", body))
-    story.append(Paragraph(f"<b>Cited sections:</b> {', '.join(d['cited_sections']) or 'none'}", body))
-    fstyle = status_ok if d["faithfulness_passed"] else status_err
+    story.append(Paragraph(f"<b>Synthesized answer:</b> {_esc(str(d['answer']))}", body))
+    story.append(Paragraph(f"<b>Cited sections (validated in code):</b> "
+                           f"{_esc(', '.join(d['cited_sections'])) or 'none'}", body))
+    cc = d.get("citation_check") or {}
+    if cc.get("invalid_citations") or cc.get("unsupported_section_mentions"):
+        story.append(Paragraph(
+            f"<b>Rejected citations:</b> {_esc(str(cc.get('invalid_citations')))} &nbsp;|&nbsp; "
+            f"<b>Clause numbers not in retrieved text:</b> {_esc(str(cc.get('unsupported_section_mentions')))}",
+            status_err))
+    fstyle = status_ok if d.get("verified") else status_err
     story.append(Paragraph(
-        f"<b>Faithfulness check:</b> {'PASSED' if d['faithfulness_passed'] else 'FAILED'} "
-        f"&mdash; {d['faithfulness_notes']}", fstyle))
+        f"<b>Evidence status:</b> {'VERIFIED' if d.get('verified') else 'NOT VERIFIED'} "
+        f"({_esc(str(d.get('evidence_status')))}; corpus: {_esc(str(d.get('corpus_status')))}) "
+        f"&mdash; {_esc(str(d['faithfulness_notes']))}", fstyle))
 else:
     story.append(Paragraph(f"FAILED: {sec.get('error', 'unknown error')}", status_err))
 
@@ -306,16 +320,20 @@ story.append(Paragraph("4. AI Resolution Recommender", h1))
 story.append(Paragraph(
     "Combines similar-past-comment resolutions and standards grounding into a drafted "
     "resolution. Confidence is a heuristic (not a model-reported probability): 40% baseline, "
-    "+25 if similar past comments found, +25 if standards-grounded, capped at 90% \u2014 "
+    "+25 if human-resolved similar comments found, +25 if verified standards from an approved corpus "
+    "(+10 for the illustrative corpus), capped at 90% \u2014 "
     "never claims near-certainty. Always reviewer-approved, never auto-applied.", body))
 sec = results.get("recommender", {})
 if sec.get("status") == "ok":
     for r in sec["data"]:
-        story.append(Paragraph(f"<b>Comment:</b> {r['comment']}", body))
-        story.append(Paragraph(f"<b>Draft resolution:</b> {r['draft']}", body))
+        story.append(Paragraph(f"<b>Comment:</b> {_esc(r['comment'])}", body))
+        story.append(Paragraph(f"<b>Draft resolution ({_esc(str(r.get('status')))}):</b> "
+                               f"{_esc(str(r['draft']))}", body))
         story.append(Paragraph(
-            f"<b>Basis:</b> {r['basis']} &nbsp;|&nbsp; <b>Confidence:</b> {r['confidence']}% "
+            f"<b>Basis (computed):</b> {r['basis']} &nbsp;|&nbsp; <b>Confidence:</b> {r['confidence']}% "
             f"&nbsp;|&nbsp; <b>Similar comments used:</b> {r['n_similar']}", body))
+        if r.get("uncertainty"):
+            story.append(Paragraph(f"<b>Uncertainty:</b> {_esc('; '.join(r['uncertainty']))}", body))
         story.append(Spacer(1, 0.25 * cm))
 else:
     story.append(Paragraph(f"FAILED: {sec.get('error', 'unknown error')}", status_err))

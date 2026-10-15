@@ -11,6 +11,6 @@ python-dotenv>=1.0
 tqdm>=4.66
 reportlab>=4.0
 psycopg2-binary==2.9.10
-qdrant-client==1.12.4
+qdrant-client==1.12.1
 ollama==0.4.7
 pytest>=8.0

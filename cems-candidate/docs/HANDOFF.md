@@ -120,3 +120,26 @@ LightOnOCR model (Hugging Face unreachable from the build sandbox). First live c
   NaN); grouping by source_file_sha256; unresolved metadata skipped unless --allow-unresolved; conflicts reported;
   insert counts from SELECTs (before: always 1). Verified on a real PostgreSQL 16 (tests/test_ingest_pg.py).
 - Not changed: schema.sql (position_key / provenance columns are not stored in Postgres yet), PRAJ backend.
+
+## 12. Chunk B: AI reliability (2026-10-16)
+Fixed (each with a regression test that fails on the previous code):
+- Booleans: config values parsed with `parse_bool` (quoted "false" was truthy; garbage now stops the run with the
+  key name); model verdicts parsed with `strict_true` (the faithfulness verdict "false" was reported as PASSED).
+- RAG evidence is validated in code: excerpts are tagged [S#]; citations to tags never shown, and clause/section
+  numbers in the answer that appear in no retrieved excerpt, give `citation_invalid`; no citation or a model-declared
+  lack of evidence gives `insufficient_evidence`. `verified` requires every gate. `cited_chunk_ids` now really are
+  the cited chunks. Same-clause duplicates are merged (ids kept), distinct clauses kept. Qdrant/embedder failures
+  return `retrieval_failed` instead of raising.
+- Recommender: never matches the comment itself (id excluded inside Qdrant and re-checked), excludes the comment's
+  own revision, scoped to its project unless `cross_project=True`; history uses the NEWEST HUMAN resolution
+  (it used the oldest, and included unreviewed AI drafts); basis computed from evidence; output is always a draft
+  with `requires_human_approval=True`; uncertainty listed; illustrative corpus gives +10 not +25.
+- DB: `insert_resolution(source='ai_suggested')` no longer resolves the comment; standards seeding idempotent;
+  `log_rag_trace` cast to uuid[] (EVERY trace insert used to fail silently); `get_comment_context` added.
+- Embedder: lazy ollama import (the AI layer could not be imported without ollama), check_ready reads new-style
+  listings, no zero vectors. Extractor: classification accepts only its own batch ids; `duplicate_of` column.
+- Qdrant payload gains document_id / comment_uid; search results return provenance.
+Verified here: 159 passed + 6 skipped without services; 165 passed with a real PostgreSQL 16 (in-memory Qdrant for the
+Qdrant tests; also run on qdrant-client 1.19.1). Demo: scripts/demo_pipeline.py (mock LLM, hash embeddings).
+NOT verified: real LLM behaviour, real nomic-embed-text retrieval quality, Qdrant server, LightOnOCR (needs
+scripts/ocr_smoke_test.py on a GPU). requirements.txt pins qdrant-client==1.12.4, which does not exist on PyPI (fix in D).

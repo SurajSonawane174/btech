@@ -22,6 +22,9 @@ Read first, every session: `docs/HANDOFF.md` (state, history, bugs already fixed
 | `standards_corpus/seed_standards.py` | PLACEHOLDER standards (AWS D1.1, ASME B31.3, IS 800): illustrative paraphrases, not real code text |
 | `agentic_rag/compliance_check.py` | decompose -> multi-hop retrieve -> synthesize -> faithfulness check -> trace log |
 | `recommender/resolution_recommender.py` | similar past comments + verified standards grounding -> drafted resolution, never auto-applied |
+| `scripts/demo_pipeline.py` | Reproducible synthetic end-to-end demo (real extractor/ingest/Postgres/Qdrant; mock LLM + hash embeddings by default, labelled) |
+| `scripts/ocr_smoke_test.py` | Opt-in real LightOnOCR check on one synthetic box (`--confirm-download`, ~2 GB) |
+| `config_utils.py` | `parse_bool` for config (invalid -> error), `strict_true` for model output (fail closed) |
 | `generate_system_report.py` | Runs every check live and writes one PDF. Use it as the regression check and the demo artifact |
 
 ## Commands (Windows / PowerShell, venv active)
@@ -38,8 +41,8 @@ python generate_system_report.py          # -> CEMS_System_Report_<timestamp>.pd
 
 ## Contracts
 - `Config.from_yaml(Path("config.yaml"))`, `LLMClient(cfg).chat_json(system, user) -> dict`
-- `check_compliance(comment_text, llm, comment_id=None) -> {answer, cited_sections, faithfulness_passed (True/False/None), faithfulness_notes, hops, cited_chunk_ids}`
-- `recommend_resolution(comment_text, llm, project_id=None, comment_id=None, top_k_similar=3) -> {draft_resolution, basis, similar_comments, standards_grounding, confidence_percent}`
+- `check_compliance(comment_text, llm, comment_id=None)` -> `verified` (True only if retrieval, synthesis, code-side citation validation and a strictly parsed faithfulness check all pass), `evidence_status`, `cited_sections`/`cited_chunk_ids` (derived from validated `[S#]` tags, never copied from the model), `retrieved_chunk_ids`, `evidence`, `citation_check`, `faithfulness_passed`, `faithfulness_notes`, `hops`, `corpus_status`, `answer`
+- `recommend_resolution(comment_text, llm, project_id=None, comment_id=None, top_k_similar=3, exclude_same_revision=True, cross_project=False, min_similarity=0.55)` -> always a draft: `status`, `requires_human_approval=True`, `auto_applied=False`, `draft_resolution`, computed `basis` (+ `model_claimed_basis`), `similar_comments` (historical examples, human resolutions only), `standards_evidence` (verified only), `standards_grounding`, `corpus_status`, `confidence_percent` (heuristic) + `confidence_rationale`, `uncertainty`, `retrieval_scope`
 - Qdrant point id = Postgres `comments.id` (UUID). Embedding dim 768.
 - Comment id: `PROJECT-DRAWING-REV-page-row-seq-HASH12` (<= 100 chars; seq is per page; HASH12 = first 12 hex of `source_file_sha256`). Duplicates are detected on `source_file_sha256`, never on `comment_id`.
 - Native annotation rects are stored in DISPLAY (rotated) coordinates; `get_text(clip=)` needs unrotated ones (`* page.derotation_matrix`), `get_pixmap(clip=)` needs display ones.
@@ -51,11 +54,12 @@ python generate_system_report.py          # -> CEMS_System_Report_<timestamp>.pd
 2. The standards corpus is placeholder. Label it "illustrative" in every demo, report and UI.
 3. AI never auto-resolves a comment: suggestion -> human approve/edit/reject -> audit record (who, when, model, sources).
 4. A failed LLM call or failed synthesis must never be reported as verified. Keep the `synthesis_succeeded` gate before the faithfulness check.
-5. `cursor.rowcount` after `execute_values ... ON CONFLICT DO NOTHING` is unreliable. Count with a SELECT.
-6. Cast UUID lists: `WHERE id = ANY(%s::uuid[])`.
-7. No secrets in code, logs, commits or screenshots.
-8. Logic changes need a mock-based test; behaviour changes also need a live run of `generate_system_report.py`.
-9. `comment_extractor.py` is ~1200 lines and works. Ask before large refactors of it; make small, reviewable commits.
+5. Booleans from config go through `parse_bool`; booleans from a model go through `strict_true`. Never use plain truthiness.
+6. `cursor.rowcount` after `execute_values ... ON CONFLICT DO NOTHING` is unreliable. Count with a SELECT.
+7. Cast UUID lists: `WHERE id = ANY(%s::uuid[])`.
+8. No secrets in code, logs, commits or screenshots.
+9. Logic changes need a mock-based test; behaviour changes also need a live run of `generate_system_report.py`.
+10. `comment_extractor.py` is ~1200 lines and works. Ask before large refactors of it; make small, reviewable commits.
 
 ## Environment gotchas
 - Original folder `C:\Users\yashr\OneDrive\Desktop\btech_ new` contains a space and sits inside OneDrive. Work from a path like `C:\dev\cems` instead (spaces break quoting; OneDrive sync can corrupt `.venv`, `.git` and Docker volumes).
