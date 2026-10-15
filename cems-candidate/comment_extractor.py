@@ -331,7 +331,15 @@ class LLMClient:
 # rather than guessed (e.g. "Annotation" is not a drawing number, "Set" is not a revision).
 _RE_PROJECT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{1,19}$")
 _RE_DRAWING = re.compile(r"^(?=.*\d)[A-Za-z0-9][A-Za-z0-9./-]{1,39}$")      # must contain a digit
-_RE_REVISION = re.compile(r"^(?:REV|R|P|C)?[-.]?[A-Z0-9]{1,2}$", re.I)     # RA, R2, REV-B, B, 0, P1
+# Revision forms accepted (case-insensitive): A / 0 / 00 / A1 (letter+digits) / RA / R2 / R12 /
+# REV-B / REVB / REV3 / P1 / C02. Rejected on purpose: drawing-type codes and words that sit in
+# the same filename slot (PID, GA, ISO, RAW, SET, REV alone). Two-letter revisions such as "AA"
+# are NOT accepted (indistinguishable from codes like "GA"): such files stay unresolved and
+# are flagged, never guessed. Extend the pattern if PRAJ confirms it uses them.
+_RE_REVISION = re.compile(
+    r"^(?:REV[-_.]?(?:[A-Z]|\d{1,2})|R[-.]?(?:[A-Z]|\d{1,2})|[A-Z]\d{0,2}|\d{1,2}|[PC][-.]?\d{1,2})$", re.I)
+_NULL_LIKE = {"", "null", "none", "n/a", "na", "nil", "unknown", "-", "--", "tbd", "not present",
+              "not available", "not visible", "not specified"}
 
 
 def plausible_project(v: Optional[str]) -> bool:
@@ -344,6 +352,20 @@ def plausible_drawing(v: Optional[str]) -> bool:
 
 def plausible_revision(v: Optional[str]) -> bool:
     return bool(v) and bool(_RE_REVISION.match(v))
+
+
+def _null_like(v) -> bool:
+    return v is None or isinstance(v, bool) or str(v).strip().lower() in _NULL_LIKE
+
+
+_LLM_FIELD_CHECKS = {
+    # meta key        -> (validator, provenance key or None)
+    "project": (plausible_project, None),
+    "drawing_number": (plausible_drawing, "drawing_number_source"),
+    "praj_revision": (plausible_revision, "revision_source"),
+    "customer_doc": (lambda v: 0 < len(v) <= 60, None),
+    "customer_revision": (plausible_revision, None),
+}
 
 
 def parse_filename(filename: str) -> Dict:
@@ -397,6 +419,7 @@ def extract_metadata(doc: fitz.Document, filename: str, llm: LLMClient, cfg: Con
     meta = parse_filename(filename)
     meta["drawing_number_source"] = "filename" if meta["drawing_number"] else None
     meta["revision_source"] = "filename" if meta["praj_revision"] else None
+    meta["metadata_notes"] = []
     _apply_title_block(doc, meta, llm, cfg)
     _apply_pdf_docinfo(doc, meta)
     if not meta["project"]:
@@ -434,6 +457,9 @@ def _apply_title_block(doc: fitz.Document, meta: Dict, llm: Optional[LLMClient],
         r.x0 + r.width * x0, r.y0 + r.height * y0,
         r.x0 + r.width * x1, r.y0 + r.height * y1,
     )
+    # title_block_region is defined on the page as DISPLAYED (page.rect), but get_text(clip=)
+    # takes unrotated coordinates: convert, or a rotated sheet reads the wrong corner.
+    clip = clip * page.derotation_matrix
     tb_text = page.get_text("text", clip=clip).strip()[:4000]
     if not tb_text:
         logger.info("Title block has no text layer; using filename / PDF metadata only")
@@ -456,26 +482,45 @@ def _apply_title_block(doc: fitz.Document, meta: Dict, llm: Optional[LLMClient],
     )
     try:
         data = llm.chat_json(system, user)
-        if isinstance(data, dict):
-            def clean(v):
-                return str(v).strip() if v not in (None, "", "null") else None
-
-            for key, field_name in [
-                ("project", "project"),
-                ("drawing_number", "drawing_number"),
-                ("revision", "praj_revision"),
-                ("customer_document_number", "customer_doc"),
-                ("customer_revision", "customer_revision"),
-            ]:
-                v = clean(data.get(key))
-                if v:
-                    meta[field_name] = v
-                    if field_name == "drawing_number":
-                        meta["drawing_number_source"] = "title_block_llm"
-                    elif field_name == "praj_revision":
-                        meta["revision_source"] = "title_block_llm"
     except Exception as e:
         logger.warning(f"Title-block extraction failed, keeping filename metadata: {e}")
+        meta.setdefault("metadata_notes", []).append("title_block_llm: call failed")
+        return
+    if not isinstance(data, dict):
+        meta.setdefault("metadata_notes", []).append("title_block_llm: reply was not a JSON object")
+        return
+    _merge_title_block_values(data, meta)
+
+
+def _merge_title_block_values(data: Dict, meta: Dict) -> None:
+    """
+    Accept a title-block LLM value only if it passes the same plausibility rule as the other
+    sources. Null-like answers ("null", "N/A", "unknown", ...) are treated as absent, implausible
+    ones are rejected and noted, and a value that disagrees with the filename is noted as a
+    conflict (the title block wins: it is the drawing's own content). Unknown keys are ignored.
+    """
+    notes = meta.setdefault("metadata_notes", [])
+    for key, field_name in [
+        ("project", "project"),
+        ("drawing_number", "drawing_number"),
+        ("revision", "praj_revision"),
+        ("customer_document_number", "customer_doc"),
+        ("customer_revision", "customer_revision"),
+    ]:
+        raw = data.get(key)
+        if _null_like(raw):
+            continue
+        v = str(raw).strip()
+        valid, src_key = _LLM_FIELD_CHECKS[field_name]
+        if not valid(v):
+            notes.append(f"title_block_llm {field_name}={v[:40]!r} rejected (implausible)")
+            continue
+        prev = meta.get(field_name)
+        if src_key and prev and meta.get(src_key) == "filename" and prev.upper() != v.upper():
+            notes.append(f"conflict {field_name}: filename={prev!r} title_block_llm={v!r} (title block used)")
+        meta[field_name] = v
+        if src_key:
+            meta[src_key] = "title_block_llm"
 
 
 # ============================
@@ -544,7 +589,11 @@ def collect_comments(doc: fitz.Document, page: fitz.Page, page_no: int) -> Tuple
                 "date": date,
                 "time": time_val,
                 "color": detect_annotation_color(annot),
-                "rect": fitz.Rect(annot.rect),
+                # display (rotated) coordinates: the space of page.rect, rendered pixmaps and
+                # get_pixmap(clip=...). annot.rect itself is UNROTATED, so on a rotated page
+                # using it directly put snapshots, row and position_key in the wrong place.
+                # (get_text(clip=...) above uses UNROTATED coordinates, so it keeps annot.rect.)
+                "rect": fitz.Rect(annot.rect) * page.rotation_matrix,
                 "arrow_pts": callout_points(doc, page, annot),
                 "annot_type": atype,
                 "source": "native",
@@ -1172,6 +1221,7 @@ COLUMNS = [
     "visual_feature",
     # identity / provenance (appended so column order of existing fields is unchanged)
     "position_key", "drawing_number_source", "revision_source", "source_file_sha256",
+    "metadata_notes",
 ]
 
 # Extraction path -> the old fixed score. Native and hosted-vision values are kept as they
@@ -1180,9 +1230,58 @@ COLUMNS = [
 _PATH_SCORE = {"native": 100, "vision": 85}
 
 
+_GENERATED_FILES = ("comments.json", "final_output.csv", "summary.csv", "review_candidates.json",
+                    "review_candidates.csv", "run_status.json")
+
+
+def _clear_previous_outputs(job_dir: Path) -> None:
+    """Remove ONLY files this extractor writes, so a failed rerun can never leave the previous
+    run's comments.json looking like a fresh result. Nothing else in the folder is touched."""
+    for name in _GENERATED_FILES:
+        (job_dir / name).unlink(missing_ok=True)
+    for sub, pattern in (("images", "*.png"), ("review_candidates", "*.png"),
+                         ("review_candidates", "*_ocr_transcript.txt")):
+        d = job_dir / sub
+        if d.is_dir():
+            for f in d.glob(pattern):
+                f.unlink(missing_ok=True)
+
+
+def write_run_status(job_dir: Path, status: Dict) -> None:
+    job_dir.mkdir(parents=True, exist_ok=True)
+    with open(job_dir / "run_status.json", "w", encoding="utf-8") as f:
+        json.dump(status, f, indent=2, ensure_ascii=False)
+
+
+def assign_output_names(pdfs: List[Path]) -> Dict[Path, str]:
+    """
+    Per-PDF output folder names for one run, deterministic for a given set of inputs:
+      * a stem that is unique in the run keeps 'output/<stem>/' (what the PRAJ backend reads);
+      * every file whose stem collides gets '<stem>__<sha8>' (first 8 hex of its SHA-256);
+      * byte-identical files with the same stem also share the hash, so they get a further
+        '__2', '__3' ... in sorted-path order.
+    """
+    by_stem: Dict[str, List[Path]] = {}
+    for p in pdfs:
+        by_stem.setdefault(p.stem, []).append(p)
+    names: Dict[Path, str] = {}
+    for stem, group in by_stem.items():
+        if len(group) == 1:
+            names[group[0]] = stem
+            continue
+        used: Dict[str, int] = {}
+        for p in sorted(group, key=lambda q: q.as_posix()):
+            base = f"{stem}__{file_sha256(p)[:8]}"
+            used[base] = used.get(base, 0) + 1
+            names[p] = base if used[base] == 1 else f"{base}__{used[base]}"
+    return names
+
+
 def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_allowed: bool,
-                ocr=None, max_pages: Optional[int] = None) -> Tuple[int, pd.DataFrame]:
-    job_dir = Path("output") / pdf_path.stem
+                ocr=None, max_pages: Optional[int] = None,
+                output_name: Optional[str] = None) -> Tuple[int, pd.DataFrame]:
+    job_dir = Path("output") / (output_name or pdf_path.stem)
+    _clear_previous_outputs(job_dir)
     img_dir = job_dir / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
     review_dir = job_dir / "review_candidates"
@@ -1279,6 +1378,7 @@ def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_al
                 "drawing_number_source": meta["drawing_number_source"],
                 "revision_source": meta["revision_source"],
                 "source_file_sha256": source_hash,
+                "metadata_notes": "; ".join(meta.get("metadata_notes", [])),
             })
     finally:
         doc.close()
@@ -1301,20 +1401,36 @@ def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_al
                          "Percentage": f"{round(len(grp) / total * 100, 1)}%"})
     rows.append({"Category": "TOTAL", "Count": total, "Percentage": "100%" if total else "0%"})
     pd.DataFrame(rows).to_csv(job_dir / "summary.csv", index=False)
+    write_run_status(job_dir, {
+        "status": "ok", "source_file": pdf_path.name, "source_path": pdf_path.as_posix(),
+        "source_file_sha256": source_hash, "comments": total,
+        "review_candidates": len(review_candidates),
+        "drawing_number": meta["drawing_number"], "drawing_number_source": meta["drawing_number_source"],
+        "praj_revision": meta["praj_revision"], "revision_source": meta["revision_source"],
+    })
 
     logger.info(f"Done: {pdf_path.stem} | {total} comments | {job_dir}")
     return total, df
 
 
-def write_master_outputs(all_dfs: Dict[str, pd.DataFrame]) -> None:
-    """Combine every processed PDF's records into one master comments file + one summary."""
+def write_master_outputs(all_dfs: Dict[str, pd.DataFrame],
+                         sources: Optional[Dict[str, Dict[str, str]]] = None) -> None:
+    """
+    Combine every processed PDF's records into one master comments file + one summary.
+    all_dfs is keyed by a run-unique name (the per-PDF output folder); `sources` maps that key
+    to {"source_file": <basename>, "source_path": <input path>}. Without it the key is used for
+    both (the old behaviour). Two inputs with the same basename therefore stay separate.
+    """
     out_dir = Path("output")
     frames = []
     for name, df in all_dfs.items():
         if df.empty:
             continue
+        info = (sources or {}).get(name, {})
         tagged = df.copy()
-        tagged.insert(0, "source_file", name)
+        tagged.insert(0, "source_file", info.get("source_file", name))
+        tagged["source_path"] = info.get("source_path", name)
+        tagged["output_dir"] = (out_dir / name).as_posix()
         frames.append(tagged)
 
     if not frames:
@@ -1326,7 +1442,7 @@ def write_master_outputs(all_dfs: Dict[str, pd.DataFrame]) -> None:
     master.to_json(out_dir / "master_comments.json", orient="records", indent=2, force_ascii=False)
 
     # per-file totals
-    per_file = master.groupby("source_file").size().reset_index(name="comment_count")
+    per_file = master.groupby(["source_path", "source_file"]).size().reset_index(name="comment_count")
     # category breakdown, overall
     by_category = master.groupby("comment_category").size().reset_index(name="count")
     # extraction-source breakdown, overall (native vs vision)
@@ -1511,20 +1627,27 @@ def main():
                 f"local OCR: {'on' if ocr else 'off'} (full page: {cfg.ocr_full_page and bool(ocr)})")
 
     start = time.time()
+    out_names = assign_output_names(pdfs)
     results: Dict[str, int] = {}
     all_dfs: Dict[str, pd.DataFrame] = {}
+    sources: Dict[str, Dict[str, str]] = {}
     for pdf in pdfs:  # one document per iteration
+        name = out_names[pdf]
+        sources[name] = {"source_file": pdf.name, "source_path": pdf.as_posix()}
         try:
             count, df = process_pdf(pdf, cfg, llm, pdf.resolve() in vision_selected,
-                                    ocr=ocr, max_pages=args.max_pages)
-            results[pdf.name] = count
-            all_dfs[pdf.name] = df
+                                    ocr=ocr, max_pages=args.max_pages, output_name=name)
+            results[pdf.as_posix()] = count
+            all_dfs[name] = df
         except Exception as e:
-            logger.error(f"Failed on {pdf.name}: {e}", exc_info=True)
-            results[pdf.name] = 0
-            all_dfs[pdf.name] = pd.DataFrame(columns=COLUMNS)
+            logger.error(f"Failed on {pdf.as_posix()}: {e}", exc_info=True)
+            results[pdf.as_posix()] = 0
+            all_dfs[name] = pd.DataFrame(columns=COLUMNS)
+            write_run_status(Path("output") / name, {
+                "status": "failed", "source_file": pdf.name, "source_path": pdf.as_posix(),
+                "error": f"{type(e).__name__}: {e}"[:500]})
 
-    write_master_outputs(all_dfs)
+    write_master_outputs(all_dfs, sources)
 
     logger.info("=" * 50)
     logger.info(f"Completed in {round(time.time() - start, 1)}s | comments: {sum(results.values())}")

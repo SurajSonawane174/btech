@@ -146,6 +146,15 @@ def get_or_create_document(project_id: str, drawing_number: str, document_title:
         return str(cur.fetchone()["id"])
 
 
+def find_revision(document_id: str, praj_revision_number: str) -> Optional[str]:
+    """Read-only lookup, so ingest can check for a conflicting source BEFORE upserting."""
+    with get_cursor() as cur:
+        cur.execute("SELECT id FROM revisions WHERE document_id = %s AND praj_revision_number = %s",
+                    (document_id, praj_revision_number))
+        row = cur.fetchone()
+        return str(row["id"]) if row else None
+
+
 def create_revision(document_id: str, praj_revision_number: str,
                      customer_document_number: str = None, customer_revision: str = None,
                      source_pdf_path: str = None) -> str:
@@ -187,9 +196,9 @@ def insert_comments_bulk(revision_id: str, records: List[Dict]) -> int:
     for r in records:
         rows.append((
             revision_id,
-            r.get("sr_no"),
+            _int_or_none(r.get("sr_no")),
             r.get("comment_id"),
-            r.get("page_sheet"),
+            _int_or_none(r.get("page_sheet")),
             r.get("actual_extracted_comment"),
             r.get("snapshot_file"),
             r.get("name_of_person_commented"),
@@ -200,7 +209,7 @@ def insert_comments_bulk(revision_id: str, records: List[Dict]) -> int:
             str(r.get("is_client_comment")).upper() == "Y",
             _normalize_category(r.get("comment_category")),
             str(r.get("is_handwritten")).upper() == "Y",
-            r.get("extraction_confidence_percent"),
+            _int_or_none(r.get("extraction_confidence_percent")),
             r.get("annotation_type"),
             r.get("classification_method"),
             r.get("comment_source"),
@@ -208,6 +217,10 @@ def insert_comments_bulk(revision_id: str, records: List[Dict]) -> int:
         ))
 
     with get_cursor(commit=True) as cur:
+        # Count with SELECTs: rowcount after execute_values + ON CONFLICT DO NOTHING is not
+        # reliable, and the old code returned the rowcount of the UPDATE below (always 1).
+        cur.execute("SELECT count(*) AS n FROM comments WHERE revision_id = %s", (revision_id,))
+        before = cur.fetchone()["n"]
         psycopg2.extras.execute_values(
             cur,
             """
@@ -224,9 +237,21 @@ def insert_comments_bulk(revision_id: str, records: List[Dict]) -> int:
             """,
             rows,
         )
-        cur.execute("UPDATE revisions SET total_comments = %s WHERE id = %s",
-                    (len(records), revision_id))
-        return cur.rowcount
+        cur.execute("SELECT count(*) AS n FROM comments WHERE revision_id = %s", (revision_id,))
+        after = cur.fetchone()["n"]
+        cur.execute("UPDATE revisions SET total_comments = %s WHERE id = %s", (after, revision_id))
+        return after - before
+
+
+def _int_or_none(v) -> Optional[int]:
+    """CSV cells arrive as text ('12', '100.0') or empty/NaN; never insert '' into an INTEGER."""
+    v = _none_if_nan(v)
+    if v is None:
+        return None
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
 
 
 def _none_if_nan(v):

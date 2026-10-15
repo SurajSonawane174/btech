@@ -41,7 +41,10 @@ python generate_system_report.py          # -> CEMS_System_Report_<timestamp>.pd
 - `check_compliance(comment_text, llm, comment_id=None) -> {answer, cited_sections, faithfulness_passed (True/False/None), faithfulness_notes, hops, cited_chunk_ids}`
 - `recommend_resolution(comment_text, llm, project_id=None, comment_id=None, top_k_similar=3) -> {draft_resolution, basis, similar_comments, standards_grounding, confidence_percent}`
 - Qdrant point id = Postgres `comments.id` (UUID). Embedding dim 768.
-- Comment id format from the extractor: `PROJECT-DRAWING-page-row-seq` (no revision in it: see known issues).
+- Comment id: `PROJECT-DRAWING-REV-page-row-seq-HASH12` (<= 100 chars; seq is per page; HASH12 = first 12 hex of `source_file_sha256`). Duplicates are detected on `source_file_sha256`, never on `comment_id`.
+- Native annotation rects are stored in DISPLAY (rotated) coordinates; `get_text(clip=)` needs unrotated ones (`* page.derotation_matrix`), `get_pixmap(clip=)` needs display ones.
+- Per-PDF output folder: `output/<stem>/`, or `output/<stem>__<sha8>/` when two inputs share a basename in one run. `run_status.json` in each folder says ok/failed.
+- Ingest groups by source file; unresolved drawing/revision is skipped unless `--allow-unresolved`; a second file claiming an existing revision is a conflict, not a merge.
 
 ## Hard rules
 1. Never claim extraction or classification accuracy without trusted ground truth. "Native annotation coverage" is not accuracy. Do not repeat the old 95-98% / ~99% claims.

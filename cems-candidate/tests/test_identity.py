@@ -281,9 +281,12 @@ def test_position_key_matches_across_revisions_and_is_not_unique(cfg, work):
     assert ce.make_position_key(1, r, page, cfg) == ce.make_position_key(1, r + (1, 1, 1, 1), page, cfg)
 
 def test_adding_comment_on_page_one_does_not_shift_page_two_ids(cfg, work):
-    """Adding a comment on page 1 must not shift sequence numbers on page 2."""
+    """Adding a comment on page 1 must not shift sequence numbers on page 2.
+    The edit changes the file bytes (so the hash suffix changes); everything else in the
+    page-2 ids must stay the same, and their seq segment must restart at 001 per page."""
     original = work / "PRJ_PID_DWG101_RA.pdf"
     make_pdf(original, pages=2)
+    _, before = ce.process_pdf(original, cfg, None, False)
 
     doc = fitz.open(original)
     try:
@@ -299,7 +302,12 @@ def test_adding_comment_on_page_one_does_not_shift_page_two_ids(cfg, work):
 
     page_two = df.loc[df["page_sheet"] == 2]
     assert len(page_two) == len(LAYOUT)
-    assert list(page_two["sr_no"]) == list(range(5, 8))
+    assert list(page_two["sr_no"]) == list(range(5, 8))          # sr_no stays document-global
+    seqs = [uid.split("-")[5] for uid in page_two["comment_id"]]
+    assert seqs == ["001", "002", "003"]                          # per-page sequence (C3)
+    strip_hash = lambda ids: ["-".join(u.split("-")[:-1]) for u in ids]
+    assert strip_hash(page_two["comment_id"]) == strip_hash(
+        before.loc[before["page_sheet"] == 2, "comment_id"])      # page-2 ids unchanged apart from hash
 
 def test_rotated_page_position_keys_are_valid(cfg, work):
     """Position keys for native annotations on rotated pages remain valid."""

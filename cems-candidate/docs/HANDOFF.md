@@ -104,3 +104,19 @@ prompts: not acceptable for PRAJ drawings); unpinned git transformers in the mai
 code paths inside the extractor.
 Verified: 18 mock tests; CLI end-to-end on synthetic PDFs with no API key. NOT verified: the real
 LightOnOCR model (Hugging Face unreachable from the build sandbox). First live check: run `colab_run.ipynb`.
+
+## 11. Chunk A: extraction reliability and ingest integrity (2026-10-15)
+- C5: same-basename PDFs in one run no longer overwrite each other (before: 2 files x 3 comments -> 3 master rows).
+  Folder `<stem>__<sha8>` only on collision; master CSV gains `source_path`, `output_dir`; per-file summary keyed by path.
+  Each run clears only the extractor's own files first and writes `run_status.json`, so a failed rerun cannot leave a
+  stale `comments.json`.
+- C6: revision rule tightened (PID/GA/RAW/REV/AA rejected; 0, A1, RA, REV-B, P1 accepted). Title-block LLM values are
+  validated like every other source; null-like answers ignored, implausible ones rejected, filename conflicts recorded
+  in the new `metadata_notes` column.
+- Rotation: `annot.rect` is unrotated, page.rect / pixmaps are display coordinates. Before the fix, on 90/180/270
+  pages the snapshot crop missed the annotation, and row/position_key were wrong; the title-block clip read the wrong
+  corner. Tests now compare against the annotation's rendered pixels at 0/90/180/270.
+- Ingest: "NA" kept as text (before: revision "NA" rows were silently dropped by groupby, comment text "NA" became
+  NaN); grouping by source_file_sha256; unresolved metadata skipped unless --allow-unresolved; conflicts reported;
+  insert counts from SELECTs (before: always 1). Verified on a real PostgreSQL 16 (tests/test_ingest_pg.py).
+- Not changed: schema.sql (position_key / provenance columns are not stored in Postgres yet), PRAJ backend.

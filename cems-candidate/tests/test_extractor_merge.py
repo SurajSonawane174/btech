@@ -306,6 +306,7 @@ def test_insert_comments_bulk_writes_visual_feature(monkeypatch):
     class Cur:
         rowcount = 1
         def execute(self, *a): pass
+        def fetchone(self): return {"n": 0}      # insert_comments_bulk counts rows with SELECTs
 
     @contextmanager
     def fake_cursor(commit=False):
