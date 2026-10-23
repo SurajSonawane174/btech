@@ -1,0 +1,32 @@
+# ============================================================
+# AI Engine — Python Dependencies
+# ============================================================
+# Install with:  pip install -r requirements.txt
+# Tesseract binary also required — see README.md
+# ============================================================
+
+# PDF parsing
+PyMuPDF==1.27.1
+
+# OCR
+pytesseract==0.3.13
+Pillow==12.1.1
+
+# Fuzzy matching
+RapidFuzz==3.14.3
+
+# AI classification (new official SDK — replaces deprecated google-generativeai)
+google-genai>=1.0.0
+
+# Data output
+pandas==3.0.0
+
+# Progress bars
+tqdm==4.67.3
+
+# Config
+PyYAML==6.0.3
+
+# Utilities (stdlib wrappers / type support)
+python-dateutil==2.9.0.post0
+typing_extensions==4.15.0

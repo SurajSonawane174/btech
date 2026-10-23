@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+output/
+*.pdf.png
+CEMS_System_Report_*.pdf
+.DS_Store

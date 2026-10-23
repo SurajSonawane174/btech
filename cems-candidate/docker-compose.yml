@@ -1,0 +1,47 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cems_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cems}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cems_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-cems}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cems}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: cems_qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # Optional. Ollama normally runs natively on the host (port 11434); starting this container as
+  # well would clash on that port. It only starts when asked for:
+  #   docker compose --profile ollama up -d
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    container_name: cems_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  ollama_data:

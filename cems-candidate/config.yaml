@@ -1,0 +1,96 @@
+# CEMS - OpenRouter full 40-PDF test configuration
+# Put ONLY your OpenRouter key in .env:
+# OPENROUTER_API_KEY=sk-or-v1-...
+
+llm:
+  base_url: "https://openrouter.ai/api/v1"
+  model: "google/gemma-4-31b-it"
+  api_key_env: "OPENROUTER_API_KEY"
+
+  # Keep non-vision LLM work off for the large test run.
+  # Set true later if you want title-block LLM extraction.
+  metadata_enabled: false
+
+  batch_size: 40
+  max_workers: 1
+  timeout: 120
+  max_retries: 1
+
+classification:
+  # Rule-based classification is used for the full test to avoid unnecessary LLM calls.
+  llm_enabled: false
+  similarity_threshold: 90
+
+extraction:
+  # PDF reply threads (/IRT): replies are attached to their root comment (reply_count,
+  # replies_json) instead of becoming separate comment rows. false = previous behaviour.
+  link_replies: true
+
+title_block:
+  region: [0.5, 0.7, 1.0, 1.0]
+
+uid:
+  row_density: 80
+
+screenshot:
+  margin: 1.15
+  min_width: 200
+  min_height: 150
+  dpi: 150
+
+vision:
+  enabled: true
+
+  # IMPORTANT: all PDFs are processed, but only this many PDFs are allowed
+  # to make vision-LLM requests.
+  max_pdfs: 15
+
+  # OpenRouter multimodal model.
+  model: "google/gemma-4-31b-it"
+  base_url: "https://openrouter.ai/api/v1"
+  api_key_env: "OPENROUTER_API_KEY"
+
+  # Who reads a detected box:
+  #   llm       -> hosted vision model above (drawing crops leave the machine)
+  #   local_ocr -> LightOnOCR on this machine (needs the ocr: block + requirements-ocr.txt)
+  box_reader: "llm"
+
+  # Local candidate detection happens first; only detected boxes are sent to the model.
+  mode: "generic"
+  render_dpi: 200
+  box_min_width_pt: 100
+  box_min_height_pt: 50
+  dilate_px: 4
+
+  # Generic color-box detector settings.
+  min_spread: 25
+  min_value: 50
+  max_area_fraction: 0.18
+  min_fill_density: 0.25
+
+  # Used only if mode is changed to palette.
+  color_tolerance: 40
+  colors:
+    Yellow: [255, 230, 101]
+    Blue: [180, 230, 255]
+    Red: [254, 200, 200]
+    Purple: [230, 200, 254]
+    Green: [200, 255, 200]
+
+# Local OCR (LightOnOCR-2-1B, ~2 GB weights, GPU strongly recommended).
+# Off on the laptop; config.colab.yaml turns it on.
+ocr:
+  enabled: false
+  model: "lightonai/LightOnOCR-2-1B"
+  api_key_env: "HF_TOKEN"          # optional, only for downloading weights
+  dpi: 150
+  max_new_tokens: 2048
+  device: "auto"                   # auto | cuda | cpu
+  full_page: false                 # whole-page OCR when a page has no annotations AND no boxes
+  llm_filter: true                 # full-page lines become comments only after this LLM filter
+
+# Per-comment snapshot pass (hosted vision): is_handwritten + visual_feature.
+# One API call per comment, so it is capped.
+enrichment:
+  enabled: false
+  max_comments: 50

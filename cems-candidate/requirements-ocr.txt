@@ -1,0 +1,9 @@
+# Optional local OCR (LightOnOCR-2-1B). Large: torch alone is ~2.5 GB with CUDA, model weights ~2 GB.
+# Install on Colab / a GPU machine, not over a metered connection.
+# If `from transformers import LightOnOcrForConditionalGeneration` fails, install transformers
+# from source (the Colab notebook does this automatically) and pin the commit you used.
+torch
+transformers
+accelerate
+huggingface_hub
+pillow
