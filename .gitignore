@@ -1,3 +1,4 @@
+
 # Virtual environments
 .venv/
 venv/
@@ -19,3 +20,6 @@ praj/ai-engine/output/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Node.js dependencies
+**/node_modules/
