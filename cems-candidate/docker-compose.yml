@@ -28,7 +28,11 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  # Optional. Ollama normally runs natively on the host (port 11434); starting this container as
+  # well would clash on that port. It only starts when asked for:
+  #   docker compose --profile ollama up -d
   ollama:
+    profiles: ["ollama"]
     image: ollama/ollama:latest
     container_name: cems_ollama
     restart: unless-stopped

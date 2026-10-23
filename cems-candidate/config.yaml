@@ -21,6 +21,11 @@ classification:
   llm_enabled: false
   similarity_threshold: 90
 
+extraction:
+  # PDF reply threads (/IRT): replies are attached to their root comment (reply_count,
+  # replies_json) instead of becoming separate comment rows. false = previous behaviour.
+  link_replies: true
+
 title_block:
   region: [0.5, 0.7, 1.0, 1.0]
 

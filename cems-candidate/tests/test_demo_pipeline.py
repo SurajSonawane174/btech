@@ -21,7 +21,7 @@ def test_demo_produces_reviewable_drafts_with_honest_evidence(tmp_path, monkeypa
     pytest.importorskip("qdrant_client")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     import demo_pipeline
-    report = demo_pipeline.main(["--dsn", DSN, "--workdir", str(tmp_path / "demo")])
+    report = demo_pipeline.main(["--dsn", DSN, "--workdir", str(tmp_path / "demo"), "--recreate-demo-db"])
     assert report["ingest"]["comments"] == 6 and not report["ingest"]["conflicts"]
     by_text = {c["comment"]: c for c in report["comments"]}
     assert len(by_text) == 3
@@ -37,3 +37,39 @@ def test_demo_produces_reviewable_drafts_with_honest_evidence(tmp_path, monkeypa
     insulation = next(c for t, c in by_text.items() if t.startswith("Add insulation"))
     assert insulation["basis"] == "generic" and insulation["historical_examples"] == []
     assert (tmp_path / "demo" / "demo_report.json").exists()
+
+
+def test_demo_refuses_to_drop_an_existing_demo_db_or_cems():
+    import psycopg2
+    import demo_pipeline
+    conn, _ = demo_pipeline.create_database(DSN, "cems_demo", recreate=True)
+    conn.close()
+    with pytest.raises(demo_pipeline.DemoDatabaseExists):
+        demo_pipeline.create_database(DSN, "cems_demo")
+    for name in ("cems", "postgres"):
+        with pytest.raises(ValueError, match="refusing"):
+            demo_pipeline.create_database(DSN, name, recreate=True)
+
+
+def test_demo_server_mode_never_touches_team_collections(tmp_path, monkeypatch):
+    """Server mode used to delete 'comments' and 'standards_chunks'. Simulate a server holding team
+    data (qdrant local mode stands in for the server) and check it survives a demo run."""
+    pytest.importorskip("qdrant_client")
+    from qdrant_client import QdrantClient, models
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    from vectordb import qdrant_client as vdb
+    server = QdrantClient(location=":memory:")
+    for name in ("comments", "standards_chunks"):
+        server.create_collection(name, vectors_config=models.VectorParams(size=768, distance=models.Distance.COSINE))
+    server.upsert("comments", points=[models.PointStruct(id=1, vector=[0.1] * 768, payload={"team": "data"})])
+    monkeypatch.setattr(vdb, "_client", server)
+    monkeypatch.setattr(vdb, "COMMENTS_COLLECTION", "comments")
+    monkeypatch.setattr(vdb, "STANDARDS_COLLECTION", "standards_chunks")
+    import demo_pipeline
+    report = demo_pipeline.main(["--dsn", DSN, "--workdir", str(tmp_path / "demo"), "--recreate-demo-db",
+                                 "--qdrant", "server"])
+    assert report["ingest"]["comments"] == 6
+    names = {c.name for c in server.get_collections().collections}
+    assert {"comments", "standards_chunks", *demo_pipeline.DEMO_COLLECTIONS} <= names
+    assert server.count("comments").count == 1                    # team data untouched
+    assert server.count("cems_demo_comments").count == 6

@@ -143,3 +143,37 @@ Verified here: 159 passed + 6 skipped without services; 165 passed with a real P
 Qdrant tests; also run on qdrant-client 1.19.1). Demo: scripts/demo_pipeline.py (mock LLM, hash embeddings).
 NOT verified: real LLM behaviour, real nomic-embed-text retrieval quality, Qdrant server, LightOnOCR (needs
 scripts/ocr_smoke_test.py on a GPU). requirements.txt pins qdrant-client==1.12.4, which does not exist on PyPI (fix in D).
+
+## 13. Reliability and evaluation batch (2026-10-17)
+- PDF reply threads: annotations with /IRT used to become separate client comments (a PRAJ reply
+  "Agreed, will revise" was stored as a client comment). `link_replies()` now attaches a reply whose chain reaches
+  an extracted root to that root (`reply_count`, `replies_json`; review-status replies keep their `state`).
+  Unlinkable replies are KEPT as comments with `reply_link_status` = parent_missing / malformed_reference / cycle;
+  a status-only reply with no text that cannot be linked is dropped and counted (`run_status.json` -> reply_threads).
+  Switch: `extraction.link_replies` (default true; false = previous behaviour). Side effect: per-page sequence
+  numbers in comment ids shift on pages that had replies. Three CSV columns appended; ingest ignores them.
+- `generate_system_report.py` rewritten: statuses are computed per check (PASS / FAIL / ERROR / NOT_CONFIGURED /
+  NO_DATA), the verdict is "ALL LIVE CHECKS PASSED" only if every gate passes (exit 0, else 1). Removed the
+  hard-coded "Implemented and verified tonight" list, including the false RBAC claim. Paths are relative to the
+  script, `--target demo` reads `cems_demo` + demo collections, queries match the current demo texts, `--junit`
+  and `--evaluation` add test and metric evidence. Read-only except normal rag_query_traces audit rows.
+- `scripts/demo_pipeline.py --qdrant server` DELETED the team collections `comments` / `standards_chunks`. It now
+  uses only `cems_demo_comments` / `cems_demo_standards_chunks`; collection names are env-overridable
+  (QDRANT_COMMENTS_COLLECTION / QDRANT_STANDARDS_COLLECTION). It refuses to drop an existing `cems_demo` unless
+  `--recreate-demo-db`, and never `cems` / `postgres`.
+- `evaluation/`: metrics (extraction P/R/F1 with one-to-one fuzzy matching, classification accuracy + macro-F1,
+  duplicate pair P/R/F1, retrieval P/R/hit@k), gold CSV format + empty templates, `run_evaluation.py` (mandatory
+  --kind synthetic|real), `synthetic_eval.py`. No real labelled dataset exists: real-world metrics are unavailable.
+  Synthetic run (7 comments, rule-based classifier): extraction P=R=1.0, duplicates P=R=1.0, classification
+  accuracy 0.71 / macro-F1 0.51 -- synthetic only, not a quality claim.
+- `scripts/live_smoke.py`: Postgres (read-only schema check; optional temporary `cems_smoke_*` database with
+  `--pg-temp-db`), Qdrant (temporary `cems_smoke_*` collection, existing collections compared before/after),
+  Ollama embedding, LLM JSON. PASS / FAIL / SKIPPED / NOT_CONFIGURED, passwords masked, no mock fallback.
+- docker-compose: the `ollama` service is behind the `ollama` profile (clashed with native Ollama on 11434).
+- `database/migrations/001_comment_provenance_columns.sql`: PROPOSED, additive, nullable, idempotent; not applied
+  and not yet written by ingest.
+Verified here: 228 passed with real PostgreSQL 16 (216 passed + 12 skipped without it), qdrant-client 1.12.1.
+Real services exercised in this sandbox: PostgreSQL 16.15; Qdrant SERVER 1.12.4 (live_smoke round trip, demo in
+server mode with a pre-existing team collection left intact, report infrastructure gate PASS on `cems_demo`).
+NOT verified: Ollama embeddings, OpenRouter LLM (no key here), LightOnOCR, real PRAJ PDFs (incl. Acrobat-made
+reply threads), real-world accuracy.

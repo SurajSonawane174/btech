@@ -78,3 +78,24 @@ def test_counts_idempotency_conflicts_and_revisions_on_real_postgres(pg):
     assert t4["comments"] == 2
     assert sorted(r[0] for r in q(conn, "SELECT praj_revision_number FROM revisions")) == ["RA", "RB"]
     assert q(conn, "SELECT count(*) FROM comments WHERE embedded")[0][0] == 4
+
+
+def test_migration_001_is_additive_idempotent_and_ingest_still_works(pg):
+    """The proposed provenance migration only adds nullable columns: existing rows keep their
+    data, a second run is a no-op, and the unchanged ingest keeps working afterwards."""
+    from test_ingest import rows, SHA_A, SHA_B
+    ingest, db, conn = pg
+    ingest.ingest_dataframe(pd.DataFrame(rows(SHA_A)), "before")
+    before = q(conn, "SELECT id::text, actual_extracted_comment FROM comments ORDER BY id")
+    sql = (ROOT / "database/migrations/001_comment_provenance_columns.sql").read_text(encoding="utf-8")
+    conn.cursor().execute(sql)
+    conn.cursor().execute(sql)                                       # idempotent
+    cols = {r[0]: r[1] for r in q(conn, "SELECT column_name, is_nullable FROM information_schema.columns "
+                                        "WHERE table_name = 'comments'")}
+    new = ["position_key", "drawing_number_source", "revision_source", "source_file_sha256", "metadata_notes",
+           "duplicate_of_uid", "reply_count", "replies_json", "reply_link_status"]
+    assert all(cols.get(c) == "YES" for c in new)
+    assert q(conn, "SELECT id::text, actual_extracted_comment FROM comments ORDER BY id") == before
+    assert q(conn, "SELECT count(*) FROM comments WHERE position_key IS NOT NULL")[0][0] == 0
+    t = ingest.ingest_dataframe(pd.DataFrame(rows(SHA_B, drawing="DWG777")), "after")
+    assert t["comments"] > 0 and not t["conflicts"]

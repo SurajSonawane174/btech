@@ -14,8 +14,9 @@ from qdrant_client.http import models as qmodels
 
 logger = logging.getLogger(__name__)
 
-COMMENTS_COLLECTION  = "comments"
-STANDARDS_COLLECTION = "standards_chunks"
+# Overridable so a demo or smoke test can use its own collections and never touch the team's.
+COMMENTS_COLLECTION  = os.getenv("QDRANT_COMMENTS_COLLECTION", "comments")
+STANDARDS_COLLECTION = os.getenv("QDRANT_STANDARDS_COLLECTION", "standards_chunks")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
 
 _client: Optional[QdrantClient] = None

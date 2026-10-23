@@ -25,18 +25,23 @@ Read first, every session: `docs/HANDOFF.md` (state, history, bugs already fixed
 | `scripts/demo_pipeline.py` | Reproducible synthetic end-to-end demo (real extractor/ingest/Postgres/Qdrant; mock LLM + hash embeddings by default, labelled) |
 | `scripts/ocr_smoke_test.py` | Opt-in real LightOnOCR check on one synthetic box (`--confirm-download`, ~2 GB) |
 | `config_utils.py` | `parse_bool` for config (invalid -> error), `strict_true` for model output (fail closed) |
-| `generate_system_report.py` | Runs every check live and writes one PDF. Use it as the regression check and the demo artifact |
+| `generate_system_report.py` | Live checks with computed gates (PASS/FAIL/ERROR/NOT_CONFIGURED/NO_DATA) -> PDF + JSON; exit 0 only if all pass. `--target demo`, `--junit`, `--evaluation` |
+| `scripts/live_smoke.py` | Per-service real checks (Postgres, Qdrant temp collection, Ollama, LLM JSON); never falls back to mocks |
+| `evaluation/` | Ground-truth format, metrics, `run_evaluation.py` (`--kind synthetic` or `real`), `synthetic_eval.py`. No real labelled data yet |
+| `database/migrations/` | Proposed additive migrations, applied manually only |
 
 ## Commands (Windows / PowerShell, venv active)
 ```
-docker compose up -d                      # postgres + qdrant (Ollama runs natively on the host, not in compose)
+docker compose up -d                      # postgres + qdrant (Ollama runs natively; container only with --profile ollama)
 ollama pull nomic-embed-text
 python comment_extractor.py --dry-run     # no LLM calls: native annots / empty pages / colour boxes per PDF
 python comment_extractor.py --input input   # add --max-pages 2 for a smoke test
 python -m pytest -q tests
 python ingest.py --input output/master_comments.csv
 python standards_corpus/seed_standards.py
-python generate_system_report.py          # -> CEMS_System_Report_<timestamp>.pdf
+python scripts/live_smoke.py              # which real services work (add --pg-temp-db with CEMS_TEST_DATABASE_URL)
+python evaluation/synthetic_eval.py       # harness sanity check (synthetic only)
+python generate_system_report.py          # -> CEMS_System_Report_<timestamp>.pdf/.json (exit 1 unless all gates pass)
 ```
 
 ## Contracts

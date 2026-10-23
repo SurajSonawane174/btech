@@ -122,6 +122,9 @@ class Config:
     # per-comment snapshot enrichment (hosted vision): is_handwritten + visual_feature
     enrichment_enabled: bool = False
     enrichment_max_comments: int = 50
+    # PDF reply threads: attach annotations that carry /IRT (in-reply-to) to their root comment
+    # instead of emitting them as independent client comments. See link_replies().
+    extraction_link_replies: bool = True
 
     def llm_needed(self) -> bool:
         """True when any enabled feature calls the hosted LLM (so an API key is required)."""
@@ -188,6 +191,8 @@ class Config:
             ocr_llm_filter=parse_bool(ocr.get("llm_filter"), True, "ocr.llm_filter"),
             enrichment_enabled=parse_bool(enr.get("enabled"), False, "enrichment.enabled"),
             enrichment_max_comments=enr.get("max_comments", 50),
+            extraction_link_replies=parse_bool((y.get("extraction", {}) or {}).get("link_replies"), True,
+                                               "extraction.link_replies"),
         )
 
 
@@ -373,17 +378,36 @@ _LLM_FIELD_CHECKS = {
 
 def parse_filename(filename: str) -> Dict:
     """
-    Expected: PROJECT_SOMETHING_DRAWINGNUMBER_REVISION.pdf. Each part is kept only if it
-    passes its plausibility check; otherwise it is None (resolved later or left unresolved).
+    Extract project, drawing number and revision from filenames with variable-length
+    descriptive sections. Search from the end so descriptions may contain underscores.
     """
-    parts = Path(filename).stem.split("_")
-    project = parts[0] if len(parts) > 0 else None
-    drawing = parts[2] if len(parts) > 2 else None
-    revision = parts[3] if len(parts) > 3 else None
+    stem = Path(filename).stem
+    # Ignore common copy suffixes such as " (1)" without changing the source filename.
+    stem = re.sub(r"\s+\(\d+\)$", "", stem)
+    parts = stem.split("_")
+
+    project = parts[0] if parts else None
+    drawing = None
+    revision = None
+
+    # Find a drawing identifier before interpreting the final token as a revision.
+    # A bare number in a descriptive filename (e.g. "Annotation_Set_3") is not enough.
+    for token in reversed(parts[1:]):
+        if plausible_drawing(token) and re.search(r"[A-Za-z]", token):
+            drawing = token
+            break
+
+    # Only accept a revision when a drawing identifier was found before it.
+    if len(parts) >= 2 and drawing is not None and plausible_revision(parts[-1]):
+        revision = parts[-1]
+        # If the final token is the drawing itself, don't reuse it as the revision.
+        if parts[-1] == drawing:
+            revision = None
+
     return {
         "project": project if plausible_project(project) else None,
-        "drawing_number": drawing if plausible_drawing(drawing) else None,
-        "praj_revision": revision if plausible_revision(revision) else None,
+        "drawing_number": drawing,
+        "praj_revision": revision,
         "customer_doc": "NA",
         "customer_revision": "NA",
     }
@@ -551,6 +575,122 @@ def callout_points(doc: fitz.Document, page: fitz.Page, annot) -> List[fitz.Poin
         return []
 
 
+_REF_RE = re.compile(r"^\s*(\d+)\s+\d+\s+R\s*$")
+
+
+def annotation_thread_keys(doc: fitz.Document, annot) -> Dict:
+    """Reply-thread keys of one annotation, read from the raw PDF dictionary.
+
+    -> {"xref", "irt_xref", "irt_malformed", "reply_type", "state", "state_model"}
+    /IRT  (in reply to) is an indirect reference "N 0 R" to the parent annotation.
+    /RT   is "R" (a reply, the default) or "Group" (grouped with the parent).
+    /State + /StateModel mark review-status replies (Accepted, Rejected, Completed, ...).
+    Anything that is present but not a valid reference is reported as malformed, not guessed.
+    """
+    out = {"xref": annot.xref, "irt_xref": None, "irt_malformed": False,
+           "reply_type": "", "state": "", "state_model": ""}
+    try:
+        kind, val = doc.xref_get_key(annot.xref, "IRT")
+        if kind != "null":
+            m = _REF_RE.match(val or "") if kind == "xref" else None
+            if m:
+                out["irt_xref"] = int(m.group(1))
+            else:
+                out["irt_malformed"] = True
+        for key, name in (("RT", "reply_type"), ("State", "state"), ("StateModel", "state_model")):
+            kind, val = doc.xref_get_key(annot.xref, key)
+            if kind in ("name", "string") and val:
+                out[name] = val.lstrip("/").strip()
+    except Exception as e:                # unreadable keys: treat as an ordinary comment
+        logger.debug(f"reply keys unreadable for xref {annot.xref}: {e}")
+    return out
+
+
+def link_replies(comments: List[Dict]) -> Tuple[List[Dict], Dict[str, int]]:
+    """Attach native reply annotations to the root comment of their thread.
+
+    A comment with a valid /IRT whose ancestor chain ends at an extracted root comment is
+    removed from the list and stored on that root as `replies` (author, date, time, text,
+    state, reply_type), in document order. Nothing is discarded silently:
+      * parent missing (not extracted, not an annotation, deleted)  -> kept as its own comment,
+        reply_link_status = "parent_missing"; replies to IT still attach to it;
+      * /IRT present but not a reference                             -> kept, "malformed_reference";
+      * the chain loops back on itself                               -> kept, "cycle";
+      * a status-only reply (no text, /State set) that cannot be linked -> dropped and counted
+        in stats["status_markers_unlinked"] (it has no comment text to keep).
+    Non-native comments (vision/OCR) never carry /IRT and pass through unchanged.
+    Returns (roots in original order, stats).
+    """
+    stats = {"replies_linked": 0, "parent_missing": 0, "malformed_reference": 0, "cycle": 0,
+             "status_markers_unlinked": 0}
+    by_xref = {c["xref"]: c for c in comments if c.get("source") == "native" and c.get("xref") is not None}
+
+    def resolve(c: Dict):
+        """-> (root comment | None, problem | None)."""
+        seen = {c.get("xref")}
+        cur = c
+        while True:
+            if cur.get("irt_malformed"):
+                return (None, "malformed_reference") if cur is c else (cur, None)
+            parent_xref = cur.get("irt_xref")
+            if parent_xref is None:
+                return (None, None) if cur is c else (cur, None)
+            if parent_xref in seen:
+                return None, "cycle"
+            parent = by_xref.get(parent_xref)
+            if parent is None:
+                return (None, "parent_missing") if cur is c else (cur, None)
+            seen.add(parent_xref)
+            cur = parent
+
+    roots: List[Dict] = []
+    attached: Dict[int, List[Dict]] = {}
+    for c in comments:
+        c.setdefault("reply_link_status", "")
+        if c.get("irt_xref") is None and not c.get("irt_malformed"):
+            roots.append(c)
+            continue
+        root, problem = resolve(c)
+        if root is not None:
+            attached.setdefault(id(root), []).append(c)
+            stats["replies_linked"] += 1
+            continue
+        if not c["text"].strip():
+            stats["status_markers_unlinked"] += 1
+            logger.warning(f"page {c['page']}: review-status reply ({c.get('state')}) has no linkable "
+                           f"parent ({problem}); it has no text and is not emitted as a comment")
+            continue
+        c["reply_link_status"] = problem
+        stats[problem] += 1
+        logger.warning(f"page {c['page']}: reply annotation kept as its own comment ({problem})")
+        roots.append(c)
+
+    # A thread whose root was itself dropped (an unlinkable status-only reply) has nowhere to go:
+    # keep its text replies as their own comments rather than losing them.
+    order = {id(c): i for i, c in enumerate(comments)}
+    root_ids = {id(r) for r in roots}
+    for key, members in list(attached.items()):
+        if key in root_ids:
+            continue
+        del attached[key]
+        for x in members:
+            stats["replies_linked"] -= 1
+            if x["text"].strip():
+                x["reply_link_status"] = "parent_missing"
+                stats["parent_missing"] += 1
+                roots.append(x)
+            else:
+                stats["status_markers_unlinked"] += 1
+    roots.sort(key=lambda c: order[id(c)])
+
+    for r in roots:
+        r["replies"] = [{
+            "author": x["author"], "date": x["date"], "time": x["time"], "text": x["text"],
+            "state": x.get("state", ""), "reply_type": x.get("reply_type") or "R", "page": x["page"],
+        } for x in attached.get(id(r), [])]
+    return roots, stats
+
+
 class AnnotationExtractionError(RuntimeError):
     """Raised when PyMuPDF cannot safely iterate a page's native annotations."""
 
@@ -577,11 +717,12 @@ def collect_comments(doc: fitz.Document, page: fitz.Page, page_no: int) -> Tuple
 
             info = annot.info
             text = (info.get("content") or "").strip()
+            thread = annotation_thread_keys(doc, annot)
 
             if not text and atype == "FreeText":
                 text = page.get_text("text", clip=annot.rect).strip()
-            if not text:
-                continue
+            if not text and not (thread["irt_xref"] is not None and thread["state"]):
+                continue                      # empty note (a bare review-status reply is kept, see link_replies)
 
             date, time_val = parse_pdf_date(info.get("creationDate") or info.get("modDate") or "")
             out.append({
@@ -600,6 +741,7 @@ def collect_comments(doc: fitz.Document, page: fitz.Page, page_no: int) -> Tuple
                 "arrow_pts": callout_points(doc, page, annot),
                 "annot_type": atype,
                 "source": "native",
+                **thread,
             })
     except Exception as e:
         logger.error(
@@ -909,6 +1051,53 @@ def filter_ocr_segments(llm: LLMClient, segments: List[str], chunk: int = 60) ->
     return kept
 
 
+# A whole line that is only a date, optionally followed by a time: "12-09-2026 14:25", "2026-09-12".
+_OCR_TIMESTAMP_RE = re.compile(
+    r"^\s*(?P<date>\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})"
+    r"(?:\s+(?P<time>\d{1,2}:\d{2}(?::\d{2})?))?\s*$")
+# A short name-like line: starts with a letter, letters/digits/space/.'- only, at most 5 words.
+_OCR_AUTHOR_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 .'\-]{0,39}$")
+
+
+def split_ocr_comment_blocks(lines: List[str]) -> Optional[List[Dict]]:
+    """Split an UNFILTERED whole-page OCR transcript into comment blocks, conservatively.
+
+    Recognised only when the transcript ends in two or more consecutive 3-line blocks
+        <author>  /  <comment text>  /  <date [time]>
+    with nothing after the last block. Lines before the first block (drawing title etc.) are
+    not candidates. Returns [{"author", "text", "date", "time", "first_line", "last_line"}]
+    (1-based transcript line numbers), or None when the layout is anything else -- the caller
+    then keeps the single whole-transcript review candidate. Dates and times are copied as
+    written (12-09-2026 may be D-M or M-D, so it is not reinterpreted); nothing is inferred.
+    """
+    ts = [i for i, line in enumerate(lines) if _OCR_TIMESTAMP_RE.match(line)]
+    if len(ts) < 2 or ts[0] < 2 or ts[-1] != len(lines) - 1:
+        return None
+    if any(b - a != 3 for a, b in zip(ts, ts[1:])):
+        return None
+    def name_like(s: str) -> bool:
+        return bool(_OCR_AUTHOR_RE.match(s)) and len(s.split()) <= 5
+
+    blocks = []
+    for t in ts:
+        author, text = lines[t - 2].strip().rstrip(":").strip(), lines[t - 1].strip()
+        if not name_like(author) or not text or _OCR_TIMESTAMP_RE.match(text):
+            return None
+        m = _OCR_TIMESTAMP_RE.match(lines[t])
+        blocks.append({"author": author, "text": re.sub(r"\s+", " ", text),
+                       "date": m.group("date"), "time": m.group("time") or "NA",
+                       "first_line": t - 1, "last_line": t + 1})
+    # If the line just before the first block could itself be an author, the blocks may be
+    # shifted by one line (e.g. a comment wrapped over two lines). Accept only the clear case
+    # of an all-caps title line above mixed-case author names; otherwise do not split.
+    if ts[0] > 2:
+        last_pre = lines[ts[0] - 3].strip()
+        if name_like(last_pre) and not (last_pre.isupper()
+                                        and all(any(ch.islower() for ch in b["author"]) for b in blocks)):
+            return None
+    return blocks
+
+
 def ocr_full_page(page: fitz.Page, page_no: int, ocr, llm: Optional[LLMClient], cfg: Config,
                   review_dir: Path) -> Tuple[List[Dict], List[Dict]]:
     """Last resort: whole-page OCR. Lines become comments only after a successful LLM
@@ -926,6 +1115,17 @@ def ocr_full_page(page: fitz.Page, page_no: int, ocr, llm: Optional[LLMClient], 
         transcript = review_dir / f"page_{page_no:03d}_ocr_transcript.txt"
         transcript.write_text("\n".join(lines), encoding="utf-8")
         reason = "ocr_unfiltered" if (llm is None or not cfg.ocr_llm_filter) else "ocr_filter_failed"
+        evidence = str(transcript).replace("\\", "/")
+        blocks = split_ocr_comment_blocks(lines)
+        if blocks:
+            # Still review-only: one candidate per recognised block, never an accepted comment.
+            logger.info(f"Page {page_no}: unfiltered OCR split into {len(blocks)} review candidate(s)")
+            return [], [{"candidate_id": f"page_{page_no:03d}_ocr_{k:03d}", "page": page_no, "color": "",
+                         "status": "needs_review", "reason": reason, "crop_file": evidence,
+                         "text": b["text"], "author": b["author"], "date": b["date"], "time": b["time"],
+                         "evidence_file": evidence,
+                         "evidence_lines": f"{b['first_line']}-{b['last_line']}"}
+                        for k, b in enumerate(blocks, start=1)]
         return [], [{"candidate_id": f"page_{page_no:03d}_ocr", "page": page_no, "color": "",
                      "status": "needs_review", "reason": reason,
                      "crop_file": str(transcript).replace("\\", "/"), "text": " | ".join(lines)[:2000]}]
@@ -1235,6 +1435,8 @@ COLUMNS = [
     # identity / provenance (appended so column order of existing fields is unchanged)
     "position_key", "drawing_number_source", "revision_source", "source_file_sha256",
     "metadata_notes", "duplicate_of",
+    # reply threads (appended; replies are attached to their root comment, not separate rows)
+    "reply_count", "replies_json", "reply_link_status",
 ]
 
 # Extraction path -> the old fixed score. Native and hosted-vision values are kept as they
@@ -1331,6 +1533,11 @@ def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_al
                 if found:
                     recovered[path] = recovered.get(path, 0) + 1
             comments.extend(found)
+        reply_stats = None
+        if cfg.extraction_link_replies:
+            comments, reply_stats = link_replies(comments)
+            if any(reply_stats.values()):
+                logger.info(f"{pdf_path.name} | reply threads: {reply_stats}")
         logger.info(
             f"{pdf_path.name} | {n_pages}/{len(doc)} pages | {len(comments)} comments | "
             f"{empty_pages} pages with no native annotations | "
@@ -1395,6 +1602,9 @@ def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_al
                 "source_file_sha256": source_hash,
                 "metadata_notes": "; ".join(meta.get("metadata_notes", [])),
                 "duplicate_of": uids[c["duplicate_of_idx"]] if "duplicate_of_idx" in c else "",
+                "reply_count": len(c.get("replies") or []),
+                "replies_json": json.dumps(c["replies"], ensure_ascii=False) if c.get("replies") else "",
+                "reply_link_status": c.get("reply_link_status", ""),
             })
     finally:
         doc.close()
@@ -1423,6 +1633,7 @@ def process_pdf(pdf_path: Path, cfg: Config, llm: Optional[LLMClient], vision_al
         "review_candidates": len(review_candidates),
         "drawing_number": meta["drawing_number"], "drawing_number_source": meta["drawing_number_source"],
         "praj_revision": meta["praj_revision"], "revision_source": meta["revision_source"],
+        "reply_threads": reply_stats if reply_stats is not None else "linking disabled",
     })
 
     logger.info(f"Done: {pdf_path.stem} | {total} comments | {job_dir}")

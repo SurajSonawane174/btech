@@ -260,6 +260,100 @@ def test_full_page_ocr_without_llm_goes_to_review_only(cfg, work):
     assert n == 0 and list(rc.reason) == ["ocr_unfiltered"]
 
 
+
+# ---- unfiltered whole-page OCR: conservative split into per-comment REVIEW candidates ----
+
+STRUCTURED_OCR = [
+    "CONTROL VALVE ASSEMBLY & SCANNED CLIENT REVIEW",
+    "Client A", "Increase flange thickness to 8 mm", "12-09-2026 14:25",
+    "Client B", "Add gasket material note", "12-09-2026 14:25",
+    "Reviewer", "Check alignment tolerance", "12-09-2026 14:25",
+    "Client C", "Approved after revision", "12-09-2026 14:25",
+]
+
+
+def _review(work):
+    import json
+    return json.loads((work / "output" / "P" / "review_candidates.json").read_text(encoding="utf-8"))
+
+
+def test_unfiltered_structured_ocr_becomes_one_review_candidate_per_comment(cfg, work):
+    pdf = work / "P.pdf"; make_plain_pdf(pdf)
+    c = dataclasses.replace(cfg, ocr_enabled=True, ocr_full_page=True)
+    n, df = ce.process_pdf(pdf, c, None, False, ocr=FakeOCR(page_lines=STRUCTURED_OCR))
+    assert n == 0 and df.empty                                    # never accepted comments
+    rc = _review(work)
+    assert [r["candidate_id"] for r in rc] == [f"page_001_ocr_{k:03d}" for k in (1, 2, 3, 4)]
+    assert [r["text"] for r in rc] == ["Increase flange thickness to 8 mm", "Add gasket material note",
+                                       "Check alignment tolerance", "Approved after revision"]
+    assert [r["author"] for r in rc] == ["Client A", "Client B", "Reviewer", "Client C"]
+    assert {(r["date"], r["time"]) for r in rc} == {("12-09-2026", "14:25")}   # copied as written
+    assert all(r["page"] == 1 and r["status"] == "needs_review" and r["reason"] == "ocr_unfiltered" for r in rc)
+    assert not any("approved" in k or "confirmed" in k for r in rc for k in r)
+    assert all("CONTROL VALVE ASSEMBLY" not in r["text"] for r in rc)          # title is not a comment
+    transcript = work / "output" / "P" / "review_candidates" / "page_001_ocr_transcript.txt"
+    assert transcript.read_text(encoding="utf-8") == "\n".join(STRUCTURED_OCR)  # evidence preserved
+    assert {r["evidence_file"] for r in rc} == {r["crop_file"] for r in rc} == {
+        "output/P/review_candidates/page_001_ocr_transcript.txt"}
+    assert [r["evidence_lines"] for r in rc] == ["2-4", "5-7", "8-10", "11-13"]
+    csv = pd.read_csv(work / "output" / "P" / "review_candidates.csv")
+    assert {"candidate_id", "page", "color", "status", "reason", "crop_file", "text"} <= set(csv.columns)
+
+
+def test_structured_ocr_after_filter_failure_keeps_filter_failed_reason(cfg, work):
+    pdf = work / "P.pdf"; make_plain_pdf(pdf)
+    c = dataclasses.replace(cfg, ocr_enabled=True, ocr_full_page=True)
+    n, _ = ce.process_pdf(pdf, c, FakeLLM(fail_filter=True), False, ocr=FakeOCR(page_lines=STRUCTURED_OCR))
+    rc = _review(work)
+    assert n == 0 and len(rc) == 4 and {r["reason"] for r in rc} == {"ocr_filter_failed"}
+
+
+def test_unstructured_ocr_keeps_single_transcript_candidate(cfg, work):
+    pdf = work / "P.pdf"; make_plain_pdf(pdf)
+    c = dataclasses.replace(cfg, ocr_enabled=True, ocr_full_page=True)
+    n, _ = ce.process_pdf(pdf, c, None, False, ocr=FakeOCR())           # default lines: no blocks
+    rc = _review(work)
+    assert n == 0 and len(rc) == 1
+    assert rc[0]["candidate_id"] == "page_001_ocr" and rc[0]["reason"] == "ocr_unfiltered"
+    assert rc[0]["text"] == " | ".join(FakeOCR().page_lines) and "author" not in rc[0]
+
+
+@pytest.mark.parametrize("lines", [
+    ["PUMP P-101", "SECTION A-A", "Move pump 200mm east", "DWG 4512-R2"],               # no timestamps
+    ["TITLE", "Client A", "Increase flange thickness", "12-09-2026 14:25"],              # one block only
+    STRUCTURED_OCR + ["Approved by PM"],                                                 # text after last block
+    ["TITLE", "Client A", "Increase flange", "thickness to 8 mm", "12-09-2026 14:25",    # comment spans 2 lines
+     "Client B", "Add gasket note", "12-09-2026 14:25"],
+    ["TITLE", "Please increase the flange thickness now", "Do it", "12-09-2026 14:25",   # author line is a sentence
+     "Client B", "Add gasket note", "12-09-2026 14:25"],
+    ["TITLE", "Client A", "12-09-2026", "12-09-2026 14:25",                              # timestamp in comment slot
+     "Client B", "Add gasket note", "12-09-2026 14:25"],
+    ["Client A", "12-09-2026 14:25", "Client B", "Add note", "12-09-2026 14:25"],        # first block incomplete
+    ["Client A", "Increase flange thickness", "Client B", "12-09-2026 14:25",            # mixed-case line above
+     "Client C", "Add gasket note", "12-09-2026 14:25"],                                 #   could be an author
+])
+def test_ambiguous_ocr_layouts_are_not_split(lines):
+    assert ce.split_ocr_comment_blocks(lines) is None
+
+
+def test_all_caps_title_above_mixed_case_authors_still_splits():
+    blocks = ce.split_ocr_comment_blocks(["PUMP SKID LAYOUT", "Client A", "Increase flange thickness", "12-09-2026",
+                                          "Client B", "Add gasket note", "12-09-2026"])
+    assert [b["author"] for b in blocks] == ["Client A", "Client B"]
+    assert all("PUMP SKID" not in b["text"] for b in blocks)
+
+
+def test_split_keeps_missing_time_as_na_and_never_invents_fields():
+    blocks = ce.split_ocr_comment_blocks(["DRAWING TITLE", "J. Mehta", "Add drain valve", "2026-09-12",
+                                          "Client B:", "Check flange rating", "12/09/2026 09:05:30"])
+    assert blocks == [
+        {"author": "J. Mehta", "text": "Add drain valve", "date": "2026-09-12", "time": "NA",
+         "first_line": 2, "last_line": 4},
+        {"author": "Client B", "text": "Check flange rating", "date": "12/09/2026", "time": "09:05:30",
+         "first_line": 5, "last_line": 7},
+    ]
+
+
 def test_enrichment_adds_fields_but_never_overrides_category_or_score(cfg, work):
     pdf = work / "N.pdf"; make_native_pdf(pdf)
     llm = FakeLLM()

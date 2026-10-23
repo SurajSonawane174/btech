@@ -325,3 +325,25 @@ def test_title_block_region_follows_the_displayed_page(cfg, work):
     finally:
         doc.close()
     assert "TBMARKER4512" in seen.get("user", "")
+
+@pytest.mark.parametrize(
+    "filename,expected_drawing,expected_revision",
+    [
+        ("PRJ001_Clean_Baseline_DWG001_RevA.pdf", "DWG001", "RevA"),
+        ("PRJ002_Technical_DWG014_RevB.pdf", "DWG014", "RevB"),
+        ("PRJ003_MultiPage_Repeat_DWG021_RevC.pdf", "DWG021", "RevC"),
+        ("PRJ001_MachineAssembly_DWG001_RevA (1).pdf", "DWG001", "RevA"),
+    ],
+)
+def test_filename_metadata_with_variable_description(
+    filename, expected_drawing, expected_revision
+):
+    meta = ce.parse_filename(filename)
+    assert meta["drawing_number"] == expected_drawing
+    assert meta["praj_revision"] == expected_revision
+
+
+def test_filename_parser_does_not_treat_drawing_type_as_revision():
+    meta = ce.parse_filename("ACME_Layout_A-2301_PID.pdf")
+    assert meta["drawing_number"] == "A-2301"
+    assert meta["praj_revision"] is None
