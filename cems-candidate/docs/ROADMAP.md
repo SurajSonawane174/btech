@@ -29,7 +29,7 @@ Free win before real data exists: write 15-20 paraphrases of ingested comments a
 2. Hybrid retrieval (keyword + dense) with a reranker and project/discipline filters.
 3. Production LLM layer: JSON-schema validated outputs, retries with backoff, response caching, prompt versioning, per-call cost and latency logging, provider switch OpenRouter <-> local Ollama model (on-prem mode).
 4. Semantic duplicate detection (embedding + fuzzy), threshold tuned on the gold set.
-5. Entity extraction (equipment tags, line numbers, spec refs) -> fill `entities` / `comment_entity_edges` -> graph queries ("all open comments on P-102 across revisions"). Postgres first, Neo4j only if needed.
+5. Entity extraction (equipment tags, line numbers, spec refs) -> graph queries ("all open comments on P-102 across revisions"). The final schema has no entity tables; this needs a schema decision first (or Qdrant payload fields).
 6. "Ask CEMS": natural-language query over the comment database (text-to-filter + RAG) with citations.
 7. Priority/severity scoring, discipline classification beyond technical/aesthetic, HDBSCAN clustering with LLM-generated labels, assignment suggestions.
 8. Review-completeness detector: topics that similar past drawings always got comments on but this one did not.

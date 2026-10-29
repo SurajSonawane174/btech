@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-_KEYS = ("vectordb.qdrant_client", "vectordb.embedder", "ingest",
+_KEYS = ("vectordb.qdrant_client", "vectordb.embedder", "vectordb.comment_sync", "ingest",
          "agentic_rag.compliance_check", "recommender.resolution_recommender")
 
 
@@ -16,7 +16,8 @@ _KEYS = ("vectordb.qdrant_client", "vectordb.embedder", "ingest",
 def _isolate_stubbed_modules():
     saved = {k: sys.modules.get(k) for k in _KEYS}
     pkg = sys.modules.get("vectordb")
-    saved_attrs = {a: getattr(pkg, a) for a in ("qdrant_client", "embedder") if pkg and hasattr(pkg, a)}
+    saved_attrs = {a: getattr(pkg, a) for a in ("qdrant_client", "embedder", "comment_sync")
+                   if pkg and hasattr(pkg, a)}
     yield
     for k, mod in saved.items():
         if mod is None:
@@ -25,7 +26,7 @@ def _isolate_stubbed_modules():
             sys.modules[k] = mod
     pkg = sys.modules.get("vectordb")
     if pkg is not None:
-        for a in ("qdrant_client", "embedder"):
+        for a in ("qdrant_client", "embedder", "comment_sync"):
             if a in saved_attrs:
                 setattr(pkg, a, saved_attrs[a])
             elif hasattr(pkg, a):

@@ -1,118 +1,69 @@
-# CEMS AI Automation Layer
+# CEMS AI engine (Python side)
 
-Multi-DB + RBAC + Semantic Search + Agentic RAG Compliance Checking +
-AI Resolution Recommender — built on top of `comment_extractor.py`'s
-real output schema and reusing its `Config`/`LLMClient` contract.
+Extraction, loading, semantic search, standards RAG and AI draft resolutions for CEMS, written
+against the FINAL database schema (`database/schema.sql`: `documents`, `users`, `comments`).
+The web API, login and roles live in the Express backend; it calls this engine through
+`cems_cli.py`.
 
-## What's in here
+| Module | What it does |
+|---|---|
+| `comment_extractor.py` | PDF -> comment rows (`output/master_comments.csv`) |
+| `ingest.py` | CSV -> `documents` + `comments` (allowlist mapping, idempotent), then embedding sync |
+| `database/db.py` | Postgres access for the 3-table schema (bigint ids) |
+| `vectordb/qdrant_client.py` | Qdrant collections `comments` (point id = `comments.id`) and `standards_chunks` (integer ids) |
+| `vectordb/comment_sync.py` | Embedding sync, similar search, resolve / reopen with Qdrant payload updates |
+| `standards_corpus/seed_standards.py` | **Placeholder** standards (AWS D1.1, ASME B31.3, IS 800) -> Qdrant only |
+| `agentic_rag/compliance_check.py` | Decompose -> multi-hop retrieve -> synthesise -> citation check -> faithfulness check; returns the trace |
+| `recommender/resolution_recommender.py` | Draft resolution from resolved similar comments + verified standards; stores only the AI columns |
+| `cems_cli.py` | JSON command line for the Express backend |
 
-| Module | What it does | Addresses |
-|---|---|---|
-| `database/schema.sql` + `db.py` | Postgres schema matching `comment_extractor.py`'s real `COLUMNS` output field-for-field, plus role-scoped RBAC, a lightweight entity graph, and a RAG trace-log table | Multi-DB, RBAC |
-| `vectordb/qdrant_client.py` + `embedder.py` | Two Qdrant collections (comments, standards_chunks), local Ollama embeddings — no API cost | Multi-DB, Semantic Search |
-| `ingest.py` | Bridges `comment_extractor.py`'s real output into both DBs | Multi-DB |
-| `standards_corpus/seed_standards.py` | **[PLACEHOLDER]** 3 illustrative standard excerpts (AWS D1.1, ASME B31.3, IS 800) — swap for PRAJ's real referenced standards before production use | Agentic RAG |
-| `agentic_rag/compliance_check.py` | Query decomposition → multi-hop retrieval → synthesis → **faithfulness self-check** (verified to actually catch unsupported claims, not just report them) → full trace log | AI Automation (novelty) |
-| `recommender/resolution_recommender.py` | Combines similar-past-comments + faithfulness-verified standards grounding into a drafted resolution, confidence-scored by source availability (40/65/90%, never near-certain) | AI Automation (novelty) |
+## Data rules
 
-## What's verified vs. what needs a live run
-
-**Verified this session**, with mocked DB/LLM + real in-memory Qdrant:
-- UID parsing against the real `make_uid()` format
-- Full ingestion logic (project/drawing/revision grouping, embedding, Qdrant upsert)
-- Both Qdrant collections, real retrieval behavior
-- **Agentic RAG full 3-call loop** (decompose → synthesize → faithfulness check) in correct order
-- **Edge case: no checkable requirement** → correctly short-circuits, no wasted LLM calls
-- **Edge case: hallucinated citation** → correctly caught and flagged by the faithfulness check, not silently trusted
-- **Resolution recommender, all 3 confidence tiers** (both sources / similar-only / neither) — correct drafts and scores in each
-
-**Not yet verified**: a live run against real Docker containers (Postgres/Qdrant/Ollama) and a real OpenRouter LLM call — no Docker or API key in this sandbox. Everything above was tested with the exact same call shapes a real `LLMClient`/live DB would receive, so logic bugs should be caught; what's untested is purely the live-environment wiring.
+- A document revision is one `documents` row, unique on `unique_doc_revision`
+  (project, document number, revision, supplier, supplier PO). A missing revision is stored as `NA`.
+- Project number, supplier name and supplier PO come from the upload form (`--project --supplier --po`);
+  they are never defaulted.
+- `comments.comment_id` is globally unique; ingest uses `ON CONFLICT (comment_id) DO NOTHING`.
+  The same PDF uploaded under a second supplier/PO is reported as a conflict and not stored.
+- Status values: `open`, `closed`. Resolve sets `closed` + `resolution_text` + `resolved_at`;
+  reopen sets `open` and clears `resolved_at`.
+- AI drafts go to `ai_suggested_resolution` / `ai_confidence_percent` only, ending with a
+  "Referenced standards: ..." line. Only a human approval writes `resolution_text`.
+- Standards text, vectors and RAG traces are never stored in Postgres.
 
 ## Setup
 
-```bash
+```
 cp .env.example .env
-docker compose up -d
-docker compose ps
-docker exec -it cems_ollama ollama pull nomic-embed-text
+docker compose up -d                 # postgres + qdrant
+ollama pull nomic-embed-text         # native Ollama on the host
 pip install -r requirements.txt
 ```
 
-## Run, in order
+One-off after moving to the final schema (old Qdrant points used UUID ids):
 
-```bash
-# 1. Ingest comment_extractor.py's output into Postgres + Qdrant
-python ingest.py --input output/master_comments.csv
-
-# 2. Seed the (placeholder) standards corpus
-python standards_corpus/seed_standards.py
-
-# 3. Try the agentic compliance check on a real comment
-python3 -c "
-import sys; sys.path.insert(0, '.')
-from comment_extractor import Config, LLMClient   # reuse the real pipeline's client
-from agentic_rag.compliance_check import check_compliance
-
-cfg = Config.from_yaml('config.yaml')
-llm = LLMClient(cfg)
-result = check_compliance('Weld symbol not per AWS D1.1, please revise', llm)
-print(result['answer'])
-print('faithfulness_passed:', result['faithfulness_passed'])
-"
-
-# 4. Try a full resolution recommendation
-python3 -c "
-import sys; sys.path.insert(0, '.')
-from comment_extractor import Config, LLMClient
-from recommender.resolution_recommender import recommend_resolution
-
-cfg = Config.from_yaml('config.yaml')
-llm = LLMClient(cfg)
-result = recommend_resolution('Pipe support spacing exceeds allowable span', llm)
-print(result['draft_resolution'])
-print('confidence:', result['confidence_percent'], '%  basis:', result['basis'])
-"
+```
+python cems_cli.py rebuild-vectors --confirm     # recreates both collections, re-embeds, re-seeds
 ```
 
-## Verify the databases directly
+## Commands (all print one JSON object)
 
-```bash
-docker exec -it cems_postgres psql -U cems -d cems -c "
-  SELECT comment_uid, comment_category, classification_method, comment_source
-  FROM comments LIMIT 10;
-"
-curl -s http://localhost:6333/collections/comments | python3 -m json.tool | grep points_count
-curl -s http://localhost:6333/collections/standards_chunks | python3 -m json.tool | grep points_count
+```
+python cems_cli.py ingest --input output/master_comments.csv --project P-1001 --supplier "ACME" --po PO-4512
+python cems_cli.py embed-sync
+python cems_cli.py search --text "check weld size" --project P-1001 --only-resolved
+python cems_cli.py search --comment-id 12
+python cems_cli.py suggest --comment-id 12
+python cems_cli.py resolve --comment-id 12 --text-stdin      # approved text on stdin
+python cems_cli.py reopen --comment-id 12
+python cems_cli.py seed-standards
+python -m pytest -q tests
 ```
 
-## RBAC — what's actually enforced
-
-`db.PERMISSIONS` is the real permission matrix. `db.can(user_id, project_id, action)`
-is the enforcement point your API layer calls before any mutating action.
-Roles are **per-project** (`project_memberships`), not global.
-
-## Why "faithfulness self-check" matters for the demo
-
-This is the single thing that separates this from a naive RAG wrapper, and
-it's worth showing Vahida directly: feed it a comment, show the retrieved
-excerpt, show the LLM's synthesized answer, then show the faithfulness
-check's verdict. In the hallucination test above, the synthesis step
-**fabricated a citation to a standard that was never retrieved** — and the
-faithfulness check caught it and returned `passed: False`. That's the
-concrete, demoable evidence that the system checks itself rather than
-blindly trusting its own output.
+Real-PostgreSQL tests run when `CEMS_TEST_DATABASE_URL` points at a server where the user may
+create databases; each test uses its own throw-away database.
 
 ## Before using this beyond a demo
 
-- Swap `standards_corpus/seed_standards.py`'s placeholder excerpts for
-  PRAJ's actual referenced standards
-- Get real OpenRouter credit / confirm rate limits for the LLM calls
-  (3 calls per compliance check, 4 per resolution recommendation —
-  budget accordingly, this adds up fast at scale)
-- Run the full stack live and re-verify against real Docker containers
-
-## Coordination note
-
-If your teammate is independently building multi-DB, sync `schema.sql`
-with them before either of you goes further — that's the one genuine
-merge-conflict risk. Everything else here is additive.
+- Replace the placeholder standards with PRAJ's referenced standards.
+- Verify real embeddings (Ollama) and the real LLM; the automated tests use stand-ins for both.

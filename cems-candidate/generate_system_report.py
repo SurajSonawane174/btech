@@ -26,9 +26,9 @@ Targets:
 The semantic-search and recommender checks use the demo's synthetic texts. On a database without
 that data the semantic check reports NO_DATA instead of passing.
 
-Read-only apart from audit traces: the report never creates, deletes or writes collections,
-tables, comments or resolutions. The one write is the normal rag_query_traces audit row that
-check_compliance() stores when the recommender runs for a comment found in the database.
+Read-only: the report never creates, deletes or writes collections, tables or comments. The
+recommender check calls the pure recommend_resolution() (it does not save the draft), and RAG
+traces go to the result and the log, not to the database.
 
 Usage:
     python generate_system_report.py [--target demo] [--config PATH] [--out PATH]
@@ -98,11 +98,12 @@ def check_infrastructure(ctx: Dict) -> Dict:
     with db.get_cursor() as cur:
         for label, sql in (("postgres_comments", "SELECT count(*) AS n FROM comments"),
                            ("postgres_embedded", "SELECT count(*) AS n FROM comments WHERE embedded = true"),
-                           ("postgres_projects", "SELECT count(*) AS n FROM projects"),
-                           ("postgres_revisions", "SELECT count(*) AS n FROM revisions"),
-                           ("postgres_resolutions_human",
-                            "SELECT count(*) AS n FROM resolutions WHERE source <> 'ai_suggested'"),
-                           ("postgres_standards_chunks", "SELECT count(*) AS n FROM standards_chunks")):
+                           ("postgres_closed",
+                            "SELECT count(*) AS n FROM comments WHERE status = 'closed' "
+                            "AND resolution_text IS NOT NULL"),
+                           ("postgres_documents", "SELECT count(*) AS n FROM documents"),
+                           ("postgres_projects",
+                            "SELECT count(DISTINCT praj_project_number) AS n FROM documents")):
             cur.execute(sql)
             counts[label] = cur.fetchone()["n"]
     client = vdb.get_client()
@@ -148,11 +149,11 @@ def check_agentic_rag(ctx: Dict) -> Dict:
             "corpus_status": r.get("corpus_status", "unknown"), "citation_check": r.get("citation_check", {})}
 
 
-def _comment_id_for(text: str) -> Optional[str]:
+def _comment_id_for(text: str) -> Optional[int]:
     from database import db
     with db.get_cursor() as cur:
-        cur.execute("SELECT id::text AS id FROM comments WHERE actual_extracted_comment = %s "
-                    "ORDER BY created_at DESC LIMIT 1", (text,))
+        cur.execute("SELECT id FROM comments WHERE actual_extracted_comment = %s "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1", (text,))
         row = cur.fetchone()
     return row["id"] if row else None
 
@@ -331,9 +332,9 @@ NOT_VERIFIED_BY_THIS_REPORT = [
     "Hosted vision fallback for flattened pages: not exercised by this report.",
     "Standards compliance: the corpus is illustrative placeholder text, not PRAJ-approved code text.",
     "Retrieval quality on real comments: the semantic check uses a handful of synthetic demo texts.",
-    "Access control / RBAC: not part of the standalone AI engine (owned by the PRAJ backend); "
-    "database/db.py has a can() helper that nothing enforces.",
-    "Human approve/edit/reject workflow: drafts are produced; no approval UI or CLI is part of this engine yet.",
+    "Access control: owned by the Express backend (users.role); the AI engine enforces no roles.",
+    "Human approve/edit workflow: cems_cli.py resolve / reopen write it; the approval UI belongs to the "
+    "frontend and is not exercised by this report.",
 ]
 
 EVIDENCE_CLASSES = [

@@ -1,22 +1,24 @@
 """
 standards_corpus/seed_standards.py
 
-PLACEHOLDER standards corpus — 3 realistic excerpts covering welding,
-piping, and structural steel, so the agentic RAG pipeline has something
-real to retrieve against tonight. These are illustrative paraphrases,
-NOT verbatim legal text of the actual codes, and MUST be swapped for
-PRAJ's actual referenced standards before this is used for anything
-beyond a demo.
+PLACEHOLDER standards corpus: illustrative paraphrases of AWS D1.1, ASME B31.3 and IS 800, NOT
+verbatim code text. They must be replaced with PRAJ's referenced standards before any real use.
+
+Standards are stored in QDRANT ONLY (collection standards_chunks); nothing is written to Postgres.
+Point ids are stable positive 63-bit integers derived from (code_reference, section_reference,
+chunk text), so re-seeding overwrites the same points instead of adding duplicates.
 
 Usage:
-    python seed_standards.py
+    python standards_corpus/seed_standards.py            # upsert into the existing collection
+    python standards_corpus/seed_standards.py --recreate # DESTRUCTIVE: drop + recreate the collection first
 """
+import argparse
+import hashlib
 import sys
-import uuid
 from pathlib import Path
+from typing import Dict, List
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from database import db
 from vectordb import qdrant_client as vdb
 from vectordb import embedder
 
@@ -71,43 +73,54 @@ PLACEHOLDER_STANDARDS = [
 ]
 
 
-def seed():
-    db.init_pool()
-    vdb.ensure_collections()
+def chunk_point_id(code_reference: str, section_reference: str, chunk_text: str) -> int:
+    """Deterministic positive 63-bit integer id (same chunk -> same id on every run)."""
+    digest = hashlib.sha256(f"{code_reference}\x1f{section_reference}\x1f{chunk_text}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF or 1
 
-    total_chunks = 0
-    for std in PLACEHOLDER_STANDARDS:
-        doc_id = db.get_or_create_standards_document(
-            title=std["title"], code_reference=std["code_reference"], discipline=std["discipline"]
-        )
-        chunk_records = [
-            {"chunk_index": i, "chunk_text": c["chunk_text"], "section_reference": c["section_reference"]}
-            for i, c in enumerate(std["chunks"])
-        ]
-        inserted = db.insert_standards_chunks_bulk(doc_id, chunk_records)   # idempotent
 
-        # Embed + push to Qdrant
-        unembedded = db.get_unembedded_standards_chunks(limit=100)
-        items, chunk_ids = [], []
-        for chunk in unembedded:
-            vector = embedder.embed_text(chunk["chunk_text"])
-            items.append({
-                "chunk_id": chunk["id"], "vector": vector, "text": chunk["chunk_text"],
-                "code_reference": chunk["code_reference"], "section_reference": chunk["section_reference"],
-                "title": chunk["title"],
-                "corpus_status": CORPUS_STATUS,
+def standards_points(standards: List[Dict] = None) -> List[Dict]:
+    """Every chunk as {id, text, payload}; vectors are added by seed()."""
+    out = []
+    for std in standards or PLACEHOLDER_STANDARDS:
+        for c in std["chunks"]:
+            out.append({
+                "id": chunk_point_id(std["code_reference"], c["section_reference"], c["chunk_text"]),
+                "text": c["chunk_text"],
+                "payload": {"code_reference": std["code_reference"], "section_reference": c["section_reference"],
+                            "page_number": c.get("page_number"), "chunk_text": c["chunk_text"],
+                            "title": std["title"], "corpus_status": CORPUS_STATUS},
             })
-            chunk_ids.append(chunk["id"])
-        if items:
-            vdb.upsert_standards_chunk_embeddings_bulk(items)
-            db.mark_standards_chunks_embedded(chunk_ids)
-            total_chunks += len(items)
+    return out
 
-        print(f"Seeded {std['code_reference']}: {inserted} new of {len(std['chunks'])} chunks")
 
-    print(f"\nTotal chunks embedded: {total_chunks}")
-    print("REMINDER: this is placeholder content — swap for PRAJ's real standards before production use.")
+def seed(recreate: bool = False, standards: List[Dict] = None) -> Dict:
+    """Embed and upsert all chunks into Qdrant. -> {"upserted": n, "failed": [section, ...]}"""
+    if recreate:
+        vdb.recreate_collection(vdb.STANDARDS_COLLECTION)
+    vdb.ensure_collections()
+    items, failed = [], []
+    for p in standards_points(standards):
+        try:
+            items.append({"id": p["id"], "vector": embedder.embed_text(p["text"]), "payload": p["payload"]})
+        except Exception as e:
+            failed.append(f"{p['payload']['code_reference']} {p['payload']['section_reference']}: {e}")
+    vdb.upsert_standards_points(items)
+    return {"collection": vdb.STANDARDS_COLLECTION, "upserted": len(items), "failed": failed,
+            "corpus_status": CORPUS_STATUS}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--recreate", action="store_true", help="drop and recreate the standards collection first")
+    args = ap.parse_args(argv)
+    result = seed(recreate=args.recreate)
+    print(f"Upserted {result['upserted']} chunk(s) into {result['collection']}; failed: {len(result['failed'])}")
+    for f in result["failed"]:
+        print(f"  {f}")
+    print("REMINDER: this is placeholder content; swap for PRAJ's real standards before production use.")
+    return result
 
 
 if __name__ == "__main__":
-    seed()
+    main()

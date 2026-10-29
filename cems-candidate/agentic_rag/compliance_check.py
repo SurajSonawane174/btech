@@ -6,7 +6,9 @@ Not single-shot RAG: decomposes the comment into retrievable
 sub-questions, retrieves per sub-question (multi-hop), synthesizes a
 grounded answer, then runs a separate faithfulness self-check before
 returning — refusing to answer if the retrieved chunks don't actually
-support the synthesized claim. Every hop is logged for audit.
+support the synthesized claim. The full trace (sub-queries, hops, retrieved and cited chunk
+ids, faithfulness result) is returned in the result as `trace` and written to the Python log;
+nothing is stored in Postgres (there is no trace table in the final schema).
 
 Evidence is checked IN CODE, not taken from the model's word:
   * every excerpt shown to the model gets a tag [S1], [S2] ...; the model must cite tags;
@@ -39,7 +41,6 @@ from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config_utils import strict_true
-from database import db
 from vectordb import qdrant_client as vdb
 from vectordb import embedder
 
@@ -238,9 +239,12 @@ def check_compliance(comment_text: str, llm_client, comment_id: Optional[str] = 
             "citation_check": {...},          # see validate_citations
             "faithfulness_passed": bool | None,
             "faithfulness_notes": str,
-            "hops": [{"hop", "query", "chunks_retrieved", "error"}, ...],
+            "hops": [{"hop", "query", "chunks_retrieved", "chunk_ids", "error"}, ...],
             "corpus_status": str,             # illustrative_placeholder | approved | unknown | none_retrieved
+            "trace": {comment_id, subqueries, hops, retrieved_chunk_ids, cited_chunk_ids,
+                      evidence_status, faithfulness_passed, faithfulness_notes, corpus_status},
         }
+    Chunk ids are the integer Qdrant point ids of the standards collection.
     """
     def result(answer, status, *, cited_tags=(), chunks=(), check=None, fpassed=None, fnotes="", hops=()):
         tag_map = {f"S{i}": c for i, c in enumerate(chunks, start=1)}
@@ -252,7 +256,7 @@ def check_compliance(comment_text: str, llm_client, comment_id: Optional[str] = 
             "retrieved_chunk_ids": [c["chunk_id"] for c in chunks],
             "evidence": [{"tag": t, "chunk_id": c["chunk_id"], "code_reference": c.get("code_reference"),
                           "section_reference": c.get("section_reference"), "title": c.get("title"),
-                          "score": c.get("score"), "corpus_status": c.get("corpus_status", "unknown"),
+                          "page_number": c.get("page_number"), "score": c.get("score"), "corpus_status": c.get("corpus_status", "unknown"),
                           "duplicate_chunk_ids": c.get("duplicate_chunk_ids", []),
                           "cited": t in cited_tags} for t, c in tag_map.items()],
             "citation_check": check or {"valid_tags": [], "invalid_citations": [],
@@ -263,13 +267,15 @@ def check_compliance(comment_text: str, llm_client, comment_id: Optional[str] = 
 
     subqueries = decompose_query(comment_text, llm_client)
     if not subqueries:
-        return result("This comment does not reference a checkable standard requirement.", "not_applicable",
-                      fnotes="Not applicable — no compliance check triggered.")
+        return _with_trace(result("This comment does not reference a checkable standard requirement.",
+                                  "not_applicable", fnotes="Not applicable — no compliance check triggered."),
+                           comment_id, subqueries)
 
     hops_log, all_chunks, errors = [], [], []
     for hop_num, subq in enumerate(subqueries[:MAX_HOPS], start=1):
         chunks, err = retrieve_hop(subq)
-        hops_log.append({"hop": hop_num, "query": subq, "chunks_retrieved": len(chunks), "error": err})
+        hops_log.append({"hop": hop_num, "query": subq, "chunks_retrieved": len(chunks),
+                         "chunk_ids": [c["chunk_id"] for c in chunks], "error": err})
         all_chunks.extend(chunks)
         if err:
             errors.append(err)
@@ -303,15 +309,16 @@ def check_compliance(comment_text: str, llm_client, comment_id: Optional[str] = 
                 status = "verified" if fcheck["passed"] else "faithfulness_failed"
                 out = result(answer, status, fpassed=fcheck["passed"], fnotes=fcheck["notes"], **common)
 
-    if comment_id is not None:
-        try:
-            db.log_rag_trace(
-                comment_id=comment_id, original_query=comment_text,
-                decomposed_subqueries=subqueries, retrieval_hops=hops_log,
-                faithfulness_passed=out["faithfulness_passed"],
-                faithfulness_notes=f"[{out['evidence_status']}] {out['faithfulness_notes']}",
-                final_answer=out["answer"], cited_chunk_ids=out["cited_chunk_ids"],
-            )
-        except Exception as e:
-            logger.warning(f"Could not log RAG trace: {e}")
+    return _with_trace(out, comment_id, subqueries)
+
+
+def _with_trace(out: Dict, comment_id, subqueries: List[str]) -> Dict:
+    """Attach the audit trace to the result and log it (structured, one line)."""
+    out["trace"] = {
+        "comment_id": comment_id, "subqueries": list(subqueries), "hops": out["hops"],
+        "retrieved_chunk_ids": out["retrieved_chunk_ids"], "cited_chunk_ids": out["cited_chunk_ids"],
+        "evidence_status": out["evidence_status"], "faithfulness_passed": out["faithfulness_passed"],
+        "faithfulness_notes": out["faithfulness_notes"], "corpus_status": out["corpus_status"],
+    }
+    logger.info("rag_trace %s", out["trace"])
     return out

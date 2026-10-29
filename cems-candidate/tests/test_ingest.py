@@ -1,13 +1,15 @@
 """
-Ingest integrity tests (Chunk A4).
+Loader (ingest.py) tests for the FINAL schema.
 
-* test_ingest.py (this file): ingest.py logic against an in-memory fake of database.db,
-  with Qdrant/Ollama stubbed. Needs no services; runs everywhere.
-* test_ingest_pg.py: the same scenarios against a REAL PostgreSQL (schema.sql applied to a
-  throw-away database). Skipped unless CEMS_TEST_DATABASE_URL is set.
+* test_ingest.py (this file): pure mapping/date logic, plus ingest scenarios against an in-memory
+  fake of database.db with the same uniqueness rules as schema.sql. No services needed.
+* test_ingest_pg.py: the same scenarios on a REAL PostgreSQL (schema.sql applied to a throw-away
+  database). Skipped unless CEMS_TEST_DATABASE_URL is set.
 """
 import sys
 import types
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -19,34 +21,28 @@ sys.path.insert(0, str(ROOT))
 SHA_A = "a1" * 32
 SHA_B = "b2" * 32
 SHA_C = "c3" * 32
+FORM = dict(praj_project_number="P-1001", supplier_name="ACME Fabricators", supplier_po_number="PO-1")
 
 
 def import_ingest_with_stubbed_vectors():
-    """Import ingest.py without qdrant-client / ollama installed or running."""
-    calls = {"upserts": [], "embed_fail": False, "upsert_fail": False}
-    qd = types.ModuleType("vectordb.qdrant_client")
-    qd.upsert_comment_embeddings_bulk = lambda items: (
-        (_ for _ in ()).throw(RuntimeError("qdrant down")) if calls["upsert_fail"] else calls["upserts"].extend(items))
-    qd.ensure_collections = lambda: None
-    em = types.ModuleType("vectordb.embedder")
+    """Import ingest.py without qdrant-client / ollama; embedding sync is recorded, not run."""
+    calls = {"syncs": 0}
+    cs = types.ModuleType("vectordb.comment_sync")
 
-    def embed_text(text):
-        if calls["embed_fail"]:
-            raise RuntimeError("ollama down")
-        return [0.1] * 768
-    em.embed_text = embed_text
-    em.check_ready = lambda: True
-    sys.modules["vectordb.qdrant_client"] = qd
-    sys.modules["vectordb.embedder"] = em
+    def sync_embeddings(ids=None, batch_size=200):
+        calls["syncs"] += 1
+        return {"embedded": 0, "failed": 0, "failed_ids": []}
+    cs.sync_embeddings = sync_embeddings
+    sys.modules["vectordb.comment_sync"] = cs
     import vectordb
-    vectordb.qdrant_client, vectordb.embedder = qd, em
+    vectordb.comment_sync = cs
     sys.modules.pop("ingest", None)
     import ingest
     return ingest, calls
 
 
 def rows(sha, drawing="DWG101", rev="RA", n=2, texts=None, rev_src="filename", dwg_src="filename",
-         source_path=None, project="PRJ"):
+         source_path=None, project="PRJ", date="12/03/2026", time="10:15:00"):
     texts = texts or [f"comment {i}" for i in range(n)]
     out = []
     for i, t in enumerate(texts, start=1):
@@ -59,8 +55,8 @@ def rows(sha, drawing="DWG101", rev="RA", n=2, texts=None, rev_src="filename", d
             "customer_document_number": "NA", "customer_revision": "NA", "page_sheet": "1",
             "comment_id": f"{project}-{d_seg}-{r_seg}-001-0{i:02d}-{i:03d}-{sha[:12].upper()}",
             "actual_extracted_comment": t, "snapshot_file": f"output/x/{i}.png",
-            "name_of_person_commented": "Reviewer", "email_of_person_commented": "",
-            "date_of_comment": "NA", "time_of_comment": "NA", "comment_color": "Yellow",
+            "name_of_person_commented": "Reviewer", "email_of_person_commented": "r@x.com",
+            "date_of_comment": date, "time_of_comment": time, "comment_color": "Yellow",
             "is_client_comment": "Y", "comment_category": "technical", "is_handwritten": "N",
             "extraction_confidence_percent": "100", "annotation_type": "Text",
             "classification_method": "rule", "comment_source": "native", "visual_feature": "",
@@ -71,163 +67,175 @@ def rows(sha, drawing="DWG101", rev="RA", n=2, texts=None, rev_src="filename", d
 
 
 class FakeDB:
-    """In-memory stand-in for database.db with the same uniqueness rules as schema.sql."""
+    """In-memory stand-in for database.db: unique_doc_revision on documents, UNIQUE comment_id."""
+    MISSING_REVISION = "NA"
 
     def __init__(self):
-        self.projects, self.documents, self.revisions, self.comments = {}, {}, {}, {}
-        self.n = 0
+        self.documents, self.comments, self.n = {}, {}, 0
 
-    def _id(self):
-        self.n += 1
-        return f"id{self.n}"
+    def find_document(self, project, drawing, rev, supplier, po):
+        return self.documents.get((project, drawing, rev or "NA", supplier, po), {}).get("id")
 
-    def get_or_create_project(self, project_code, **_):
-        return self.projects.setdefault(project_code, self._id())
+    def upsert_document(self, project, drawing, rev, supplier, po, cust_doc=None, cust_rev=None):
+        key = (project, drawing, rev or "NA", supplier, po)
+        if key not in self.documents:
+            self.n += 1
+            self.documents[key] = {"id": self.n, "customer_document_number": None if cust_doc in (None, "NA") else cust_doc}
+        return self.documents[key]["id"]
 
-    def get_or_create_document(self, project_id, drawing_number, **_):
-        return self.documents.setdefault((project_id, drawing_number), self._id())
+    def comment_id_owners(self, ids):
+        return {c: self.comments[c]["document_id"] for c in ids if c in self.comments}
 
-    def find_revision(self, document_id, praj_revision_number):
-        r = self.revisions.get((document_id, praj_revision_number))
-        return r["id"] if r else None
+    def get_comment_ids_for_document(self, document_id):
+        return [k for k, v in self.comments.items() if v["document_id"] == document_id]
 
-    def create_revision(self, document_id, praj_revision_number, source_pdf_path=None, **_):
-        key = (document_id, praj_revision_number)
-        if key not in self.revisions:
-            self.revisions[key] = {"id": self._id(), "source_pdf_path": source_pdf_path}
-        else:
-            self.revisions[key]["source_pdf_path"] = source_pdf_path
-        return self.revisions[key]["id"]
-
-    def insert_comments_bulk(self, revision_id, records):
-        before = sum(1 for (r, _) in self.comments if r == revision_id)
-        for rec in records:
-            key = (revision_id, rec["comment_id"])
-            if key not in self.comments:                   # ON CONFLICT DO NOTHING
-                self.comments[key] = {"id": self._id(), "comment_uid": rec["comment_id"],
-                                      "actual_extracted_comment": rec["actual_extracted_comment"],
-                                      "comment_category": rec["comment_category"], "embedded": False}
-        return sum(1 for (r, _) in self.comments if r == revision_id) - before
-
-    def get_comments_by_revision(self, revision_id):
-        return [dict(c) for (r, _), c in self.comments.items() if r == revision_id]
-
-    def mark_comments_embedded(self, ids):
-        for c in self.comments.values():
-            if c["id"] in ids:
-                c["embedded"] = True
+    def insert_comments(self, document_id, rows):
+        before = len(self.comments)
+        for r in rows:
+            self.comments.setdefault(r["comment_id"], dict(r, document_id=document_id))   # ON CONFLICT DO NOTHING
+        return len(self.comments) - before
 
 
 @pytest.fixture
 def env(monkeypatch):
     ingest, calls = import_ingest_with_stubbed_vectors()
     fake = FakeDB()
-    for name in ("get_or_create_project", "get_or_create_document", "find_revision", "create_revision",
-                 "insert_comments_bulk", "get_comments_by_revision", "mark_comments_embedded"):
+    for name in ("find_document", "upsert_document", "comment_id_owners", "get_comment_ids_for_document",
+                 "insert_comments"):
         monkeypatch.setattr(ingest.db, name, getattr(fake, name))
     return ingest, fake, calls
 
 
+def run(ingest, data, **kw):
+    form = dict(FORM)
+    form.update({k: kw.pop(k) for k in list(kw) if k in form})
+    return ingest.ingest_dataframe(pd.DataFrame(data), "t", **form, **kw)
+
+
+# ---------------------------------------------------------------- pure mapping
+
 def test_read_keeps_literal_na_text(tmp_path):
     ingest, _ = import_ingest_with_stubbed_vectors()
     df = pd.DataFrame(rows(SHA_A, texts=["NA", "None", "null"]))
-    df.loc[0, "visual_feature"] = ""
     p = tmp_path / "m.csv"
     df.to_csv(p, index=False)
     back = ingest.read_extractor_csv(p)
-    assert list(back.actual_extracted_comment) == ["NA", "None", "null"]     # text kept as text
+    assert list(back.actual_extracted_comment) == ["NA", "None", "null"]
     assert back.loc[0, "customer_document_number"] == "NA"
-    assert pd.isna(back.loc[0, "visual_feature"])                            # only empty -> missing
+    assert pd.isna(back.loc[0, "visual_feature"])
 
 
-def test_two_revisions_land_in_two_revision_rows(env):
-    ingest, fake, _ = env
-    df = pd.DataFrame(rows(SHA_A, rev="RA") + rows(SHA_B, rev="RB"))
-    t = ingest.ingest_dataframe(df, "test")
+@pytest.mark.parametrize("date,time,expected", [
+    ("12/03/2026", "10:15:00", datetime(2026, 3, 12, 10, 15, 0)),      # native: DD/MM/YYYY
+    ("2026-03-02", "10:15", datetime(2026, 3, 2, 10, 15, 0)),          # vision box: ISO, HH:MM
+    ("25/03/2026", "09:05:30", datetime(2026, 3, 25, 9, 5, 30)),       # day > 12 is still day-first
+    ("12-09-2026", "14:25", None),                                     # ambiguous OCR date: not guessed
+    ("12/09/26", "14:25", None), ("2026/09/12", "14:25", None),
+    ("31/02/2026", "10:00", None),                                     # impossible date
+    ("12/03/2026", "NA", None), ("NA", "10:15:00", None), (None, None, None), ("", "", None),
+    ("12/03/2026", "25:00", None),
+])
+def test_comment_datetime_parsing(date, time, expected):
+    ingest, _ = import_ingest_with_stubbed_vectors()
+    assert ingest.parse_comment_datetime(date, time) == expected
+
+
+def test_mapping_is_an_explicit_allowlist():
+    ingest, _ = import_ingest_with_stubbed_vectors()
+    from database import db
+    m = ingest.map_comment_row(rows(SHA_A)[0])
+    assert set(m) == set(db.COMMENT_INSERT_COLUMNS)
+    assert m["is_client_comment"] is True and m["is_handwritten"] is False
+    assert m["extraction_confidence_percent"] == Decimal("100") and m["page_sheet"] == "1"
+    assert m["comment_datetime"] == datetime(2026, 3, 12, 10, 15)
+    empty = ingest.map_comment_row({"comment_id": "X", "actual_extracted_comment": "t",
+                                    "extraction_confidence_percent": "", "page_sheet": "2"})
+    assert empty["extraction_confidence_percent"] is None and empty["is_client_comment"] is False
+    dropped = ingest.dropped_columns(pd.DataFrame(rows(SHA_A)))
+    assert {"sr_no", "email_of_person_commented", "annotation_type", "classification_method",
+            "comment_source", "visual_feature", "position_key", "metadata_notes"} <= set(dropped)
+    assert "comment_id" not in dropped and "date_of_comment" not in dropped
+
+
+# ---------------------------------------------------------------- scenarios
+
+def test_two_revisions_land_in_two_document_rows(env):
+    ingest, fake, calls = env
+    t = run(ingest, rows(SHA_A, rev="RA") + rows(SHA_B, rev="RB"))
     assert t["comments"] == 4 and not t["skipped"] and not t["conflicts"]
-    assert len(fake.revisions) == 2 and len(fake.documents) == 1
+    assert sorted(k[2] for k in fake.documents) == ["RA", "RB"] and calls["syncs"] == 1
 
 
 def test_reingesting_same_file_is_idempotent(env):
     ingest, fake, _ = env
-    df = pd.DataFrame(rows(SHA_A))
-    first = ingest.ingest_dataframe(df, "run1")
-    second = ingest.ingest_dataframe(df, "run2")
+    first, second = run(ingest, rows(SHA_A)), run(ingest, rows(SHA_A))
     assert (first["comments"], second["comments"], second["already_present"]) == (2, 0, 2)
-    assert not second["conflicts"] and len(fake.comments) == 2
+    assert len(fake.documents) == 1
 
 
 def test_different_file_claiming_same_revision_is_a_conflict_not_a_merge(env):
     ingest, fake, _ = env
-    ingest.ingest_dataframe(pd.DataFrame(rows(SHA_A)), "first")
-    t = ingest.ingest_dataframe(pd.DataFrame(rows(SHA_B, texts=["comment 0", "comment 1"])), "second")
+    run(ingest, rows(SHA_A))
+    t = run(ingest, rows(SHA_B))
+    assert t["comments"] == 0 and len(t["conflicts"]) == 1 and "another source file" in t["conflicts"][0]["reason"]
+
+
+def test_same_pdf_under_another_supplier_or_po_is_a_conflict(env):
+    ingest, fake, _ = env
+    run(ingest, rows(SHA_A))
+    t = run(ingest, rows(SHA_A), supplier_name="Other Supplier")
     assert t["comments"] == 0 and len(t["conflicts"]) == 1
-    assert len(fake.comments) == 2                                           # nothing merged
+    assert "globally unique" in t["conflicts"][0]["reason"]
+    assert len(fake.documents) == 1                      # no empty document row was created
+    t = run(ingest, rows(SHA_A), supplier_po_number="PO-2")
+    assert len(t["conflicts"]) == 1 and len(fake.documents) == 1
 
 
-def test_identical_text_in_unrelated_files_is_not_merged(env):
+def test_missing_revision_is_stored_as_na_and_is_idempotent(env):
     ingest, fake, _ = env
-    same = ["Check nozzle orientation", "Verify weld size"]
-    df = pd.DataFrame(rows(SHA_A, drawing="DWG101", texts=same) + rows(SHA_B, drawing="DWG202", texts=same))
-    t = ingest.ingest_dataframe(df, "test")
-    assert t["comments"] == 4 and len(fake.documents) == 2
+    t1 = run(ingest, rows(SHA_A, rev="NA", rev_src="unresolved"))
+    t2 = run(ingest, rows(SHA_A, rev="NA", rev_src="unresolved"))
+    assert (t1["comments"], t2["comments"]) == (2, 0) and not t1["skipped"]
+    assert [k[2] for k in fake.documents] == ["NA"]
 
 
-def test_unresolved_metadata_is_skipped_by_default(env):
+def test_unresolved_drawing_is_skipped_unless_allowed(env):
     ingest, fake, _ = env
-    df = pd.DataFrame(rows(SHA_A, drawing="UNKNOWN", rev="NA", rev_src="unresolved", dwg_src="unresolved")
-                      + rows(SHA_B, drawing="DWG101", rev="NA", rev_src="unresolved"))
-    t = ingest.ingest_dataframe(df, "test")
-    assert t["comments"] == 0 and len(t["skipped"]) == 2 and not fake.revisions
-    reasons = sorted(x["reason"] for x in t["skipped"])
-    assert reasons[0].startswith("unresolved drawing number and revision")
-    assert reasons[1].startswith("unresolved revision")
-
-
-def test_allow_unresolved_isolates_each_file(env):
-    """Two unresolved files must not end up in one shared 'UNKNOWN/NA' revision."""
-    ingest, fake, _ = env
-    df = pd.DataFrame(rows(SHA_A, drawing="UNKNOWN", rev="NA", rev_src="unresolved", dwg_src="unresolved")
-                      + rows(SHA_B, drawing="UNKNOWN", rev="NA", rev_src="unresolved", dwg_src="unresolved")
-                      + rows(SHA_C, drawing="DWG101", rev="NA", rev_src="unresolved"))
-    t = ingest.ingest_dataframe(df, "test", allow_unresolved=True)
-    assert t["comments"] == 6 and not t["conflicts"]
-    drawings = {d for (_, d) in fake.documents}
-    assert drawings == {f"UNRESOLVED-{SHA_A[:12].upper()}", f"UNRESOLVED-{SHA_B[:12].upper()}", "DWG101"}
-    assert sorted(rev for (_, rev) in fake.revisions) == sorted(
-        [f"NA-{SHA_A[:8].upper()}", f"NA-{SHA_B[:8].upper()}", f"NA-{SHA_C[:8].upper()}"])
-
-
-def test_revision_zero_and_text_na_are_not_treated_as_missing(env):
-    ingest, fake, _ = env
-    t = ingest.ingest_dataframe(pd.DataFrame(rows(SHA_A, rev="0", texts=["NA", "ok"])), "test")
-    assert t["comments"] == 2 and not t["skipped"]
-    assert any(rev == "0" for (_, rev) in fake.revisions)
-    assert {c["actual_extracted_comment"] for c in fake.comments.values()} == {"NA", "ok"}
-
-
-def test_embedding_failure_keeps_rows_and_retries_later(env):
-    ingest, fake, calls = env
-    calls["upsert_fail"] = True
-    t1 = ingest.ingest_dataframe(pd.DataFrame(rows(SHA_A)), "run1")
-    assert (t1["comments"], t1["embedded"], t1["embedding_failed"]) == (2, 0, 2)
-    assert not any(c["embedded"] for c in fake.comments.values())
-    calls["upsert_fail"] = False
-    t2 = ingest.ingest_dataframe(pd.DataFrame(rows(SHA_A)), "run2")
-    assert (t2["comments"], t2["embedded"]) == (0, 2)                         # retried, not re-inserted
-
-
-def test_legacy_csv_without_source_hash_still_ingests(env):
-    ingest, fake, _ = env
-    legacy = pd.DataFrame(rows(SHA_A)).drop(columns=["source_file_sha256", "drawing_number_source",
-                                                     "revision_source", "position_key", "metadata_notes"])
-    t = ingest.ingest_dataframe(legacy, "legacy")
+    t = run(ingest, rows(SHA_A, drawing="UNKNOWN", dwg_src="unresolved"))
+    assert t["comments"] == 0 and "unresolved drawing number" in t["skipped"][0]["reason"] and not fake.documents
+    t = run(ingest, rows(SHA_A, drawing="UNKNOWN", dwg_src="unresolved"), allow_unresolved=True)
     assert t["comments"] == 2
+    assert [k[1] for k in fake.documents] == [f"UNRESOLVED-{SHA_A[:12].upper()}"]
+
+
+def test_form_fields_are_required_and_never_defaulted(env):
+    ingest, fake, _ = env
+    for field in ("praj_project_number", "supplier_name", "supplier_po_number"):
+        with pytest.raises(ValueError, match="required"):
+            run(ingest, rows(SHA_A), **{field: ""})
+    assert not fake.documents
+
+
+def test_rows_without_text_and_unparseable_dates_are_counted(env):
+    ingest, fake, _ = env
+    data = rows(SHA_A, texts=["keep", "", "ambiguous"])
+    data[2]["date_of_comment"], data[2]["time_of_comment"] = "12-09-2026", "14:25"
+    t = run(ingest, data)
+    assert t["comments"] == 2 and t["rows_without_text"] == 1 and t["datetime_not_stored"] == 1
+    stored = {c["actual_extracted_comment"]: c for c in fake.comments.values()}
+    assert stored["ambiguous"]["comment_datetime"] is None
+    assert stored["keep"]["comment_datetime"] == datetime(2026, 3, 12, 10, 15)
 
 
 def test_rows_of_one_file_with_conflicting_revisions_are_rejected(env):
     ingest, fake, _ = env
-    bad = rows(SHA_A)
-    bad[1]["praj_revision_number"] = "RB"
-    t = ingest.ingest_dataframe(pd.DataFrame(bad), "bad")
+    data = rows(SHA_A)
+    data[1]["praj_revision_number"] = "RB"
+    t = run(ingest, data)
     assert t["comments"] == 0 and "disagree" in t["skipped"][0]["reason"]
+
+
+def test_no_embed_skips_the_sync(env):
+    ingest, _, calls = env
+    run(ingest, rows(SHA_A), embed=False)
+    assert calls["syncs"] == 0

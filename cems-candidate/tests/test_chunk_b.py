@@ -10,7 +10,6 @@ not installed. Nothing here proves model quality; it proves the control flow and
 import dataclasses
 import importlib.util
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
@@ -155,7 +154,6 @@ def rag(monkeypatch):
         return [0.1] * 768
     monkeypatch.setattr(cc.vdb, "search_standards", search_standards, raising=False)
     monkeypatch.setattr(cc.embedder, "embed_text", embed_text, raising=False)
-    monkeypatch.setattr(cc.db, "log_rag_trace", lambda **kw: "trace", raising=False)
     return cc, store
 
 
@@ -255,13 +253,13 @@ def test_no_checkable_requirement_is_not_applicable(rag):
 def rec(rag, monkeypatch):
     cc, store = rag
     from recommender import resolution_recommender as rr
-    state = {"hits": [], "history": [], "context": None, "search_kwargs": None,
-             "context_error": None, "history_error": None}
+    state = {"hits": [], "context": None, "search_kwargs": None, "context_error": None, "saved": []}
 
-    def search_similar_comments(vec, top_k=5, project_id=None, score_threshold=0.55,
-                                exclude_ids=None, exclude_revision_id=None):
-        state["search_kwargs"] = {"project_id": project_id, "exclude_ids": exclude_ids,
-                                  "exclude_revision_id": exclude_revision_id}
+    def search_similar_comments(vec, top_k=5, score_threshold=0.55, praj_project_number=None,
+                                comment_category=None, only_resolved=False, exclude_ids=None,
+                                exclude_document_id=None):
+        state["search_kwargs"] = {"praj_project_number": praj_project_number, "exclude_ids": exclude_ids,
+                                  "exclude_document_id": exclude_document_id, "only_resolved": only_resolved}
         return [dict(h) for h in state["hits"]]
 
     def get_comment_context(cid):
@@ -269,85 +267,85 @@ def rec(rag, monkeypatch):
             raise state["context_error"]
         return state["context"]
 
-    def get_resolution_history_for(ids):
-        if state["history_error"]:
-            raise state["history_error"]
-        return [h for h in state["history"] if h["comment_id"] in ids]
-
     def forbidden(*a, **k):
-        raise AssertionError("the recommender must never write a resolution")
+        raise AssertionError("the recommender must never resolve a comment")
 
     monkeypatch.setattr(rr.vdb, "search_similar_comments", search_similar_comments, raising=False)
     monkeypatch.setattr(rr.embedder, "embed_text", lambda t: [0.1] * 768, raising=False)
     monkeypatch.setattr(rr.db, "get_comment_context", get_comment_context, raising=False)
-    monkeypatch.setattr(rr.db, "get_resolution_history_for", get_resolution_history_for, raising=False)
-    monkeypatch.setattr(rr.db, "insert_resolution", forbidden, raising=False)
+    monkeypatch.setattr(rr.db, "save_ai_suggestion",
+                        lambda cid, text, conf: state["saved"].append((cid, text, conf)) or True, raising=False)
+    monkeypatch.setattr(rr.db, "resolve_comment", forbidden, raising=False)
+    monkeypatch.setattr(rr.db, "reopen_comment", forbidden, raising=False)
     return rr, state, store
 
 
-def hit(cid, text="Weld size wrong", score=0.9, rev="rev-old"):
-    return {"comment_id": cid, "score": score, "text": text, "revision_id": rev, "comment_uid": f"UID-{cid}"}
+def hit(pk, text="Weld size wrong", score=0.9, doc=3, resolution="Weld resized to 6 mm."):
+    return {"id": pk, "score": score, "text": text, "document_id": doc, "comment_id": f"UID-{pk}",
+            "status": "closed" if resolution else "open", "resolution_text": resolution}
 
 
-def test_comment_never_matches_itself_and_its_revision_is_excluded(rec):
+def test_comment_never_matches_itself_and_its_document_is_excluded(rec):
     rr, state, _ = rec
-    state["context"] = {"comment_id": "self", "revision_id": "rev-new", "project_id": "proj-1"}
-    state["hits"] = [hit("self", rev="rev-new"), hit("old-1")]       # store returned self anyway
-    state["history"] = [{"comment_id": "old-1", "resolution_text": "Weld resized to 6 mm.",
-                         "resolved_by": "engineer", "source": "manual"}]
-    r = rr.recommend_resolution("Weld size wrong", RagLLM(), comment_id="self")
-    assert [s["comment_id"] for s in r["similar_comments"]] == ["old-1"]
-    assert state["search_kwargs"] == {"project_id": "proj-1", "exclude_ids": ["self"],
-                                      "exclude_revision_id": "rev-new"}
+    state["context"] = {"id": 10, "document_id": 5, "praj_project_number": "P1"}
+    state["hits"] = [hit(10, doc=5), hit(11)]                          # store returned self anyway
+    r = rr.recommend_resolution("Weld size wrong", RagLLM(), comment_id=10)
+    assert [s["id"] for s in r["similar_comments"]] == [11]
+    assert state["search_kwargs"] == {"praj_project_number": "P1", "exclude_ids": [10],
+                                      "exclude_document_id": 5, "only_resolved": True}
 
 
 def test_cross_project_is_opt_in(rec):
     rr, state, _ = rec
-    state["context"] = {"comment_id": "self", "revision_id": "rev-new", "project_id": "proj-1"}
-    rr.recommend_resolution("x", RagLLM(), comment_id="self", cross_project=True)
-    assert state["search_kwargs"]["project_id"] is None
+    state["context"] = {"id": 10, "document_id": 5, "praj_project_number": "P1"}
+    rr.recommend_resolution("x", RagLLM(), comment_id=10, cross_project=True)
+    assert state["search_kwargs"]["praj_project_number"] is None
 
 
-def test_latest_human_resolution_is_used(rec):
+def test_only_comments_with_an_approved_resolution_are_history(rec):
     rr, state, _ = rec
-    state["hits"] = [hit("old-1")]
-    state["history"] = [   # newest first, as the SQL orders it
-        {"comment_id": "old-1", "resolution_text": "NEW: weld resized to 8 mm", "source": "manual"},
-        {"comment_id": "old-1", "resolution_text": "OLD: weld resized to 6 mm", "source": "manual"}]
-    r = rr.recommend_resolution("Weld size wrong", RagLLM(), project_id="proj-1")
-    assert r["similar_comments"][0]["resolution_text"].startswith("NEW")
+    state["hits"] = [hit(11, resolution=None), hit(12, resolution="Weld resized to 8 mm.")]
+    r = rr.recommend_resolution("Weld size wrong", RagLLM(), praj_project_number="P1")
+    assert [s["id"] for s in r["similar_comments"]] == [12]
+    assert r["similar_comments"][0]["resolution_text"] == "Weld resized to 8 mm."
 
 
 def test_draft_is_always_a_human_review_draft_with_separate_evidence(rec):
     rr, state, _ = rec
-    state["hits"] = [hit("old-1")]
-    state["history"] = [{"comment_id": "old-1", "resolution_text": "Weld resized.", "source": "manual"}]
+    state["hits"] = [hit(11, resolution="Weld resized.")]
     llm = RagLLM(draft={"draft_resolution": "Resize weld.", "basis": "generic"})
-    r = rr.recommend_resolution("Weld size not per AWS D1.1", llm, project_id="proj-1")
+    r = rr.recommend_resolution("Weld size not per AWS D1.1", llm, praj_project_number="P1")
     assert (r["status"], r["requires_human_approval"], r["auto_applied"]) == ("draft_requires_human_review", True, False)
     assert r["basis"] == "both" and r["model_claimed_basis"] == "generic" and r["basis_mismatch"] is True
     assert r["similar_comments"][0]["evidence_type"] == "historical_example"
     assert [e["chunk_id"] for e in r["standards_evidence"]] == ["c1"]
+    assert r["citations"] == [{"chunk_id": "c1", "code_reference": "AWS D1.1", "section_reference": "Clause 2.4",
+                               "page_number": None}]
+    assert r["stored_text"] == "Resize weld.\n\nReferenced standards: AWS D1.1 Clause 2.4"
+    assert r["draft_resolution"] == "Resize weld."
     assert r["confidence_percent"] == 75                     # 40 + 25 history + 10 (illustrative corpus)
     assert any("not authoritative" in u for u in r["uncertainty"])
+    assert r["trace"]["subqueries"] == ["fillet weld size rule"] and r["trace"]["cited_chunk_ids"] == ["c1"]
     draft_prompt = next(u for k, u in llm.calls if k == "draft")
     assert "HISTORICAL EXAMPLES (precedent, not verified evidence)" in draft_prompt
 
 
-def test_unverified_standards_are_not_used_as_evidence(rec):
+def test_failed_faithfulness_is_flagged_and_gets_no_confidence(rec):
     rr, state, _ = rec
-    r = rr.recommend_resolution("Weld size", RagLLM(verdict="false"), project_id="proj-1")
-    assert r["standards_evidence"] == [] and r["basis"] == "generic"
-    assert any("faithfulness_failed" in u for u in r["uncertainty"])
+    r = rr.recommend_resolution("Weld size", RagLLM(verdict="false"), praj_project_number="P1")
+    assert r["standards_evidence"] == [] and r["basis"] == "generic" and r["citations"] == []
+    assert r["faithfulness_failed"] is True and r["confidence_percent"] is None
+    assert r["status"] == "draft_requires_human_review"           # the draft is still returned
+    assert "Referenced standards" not in r["stored_text"]
 
 
 def test_services_down_degrade_to_an_explicit_uncertain_draft(rec):
     rr, state, store = rec
     state["context_error"] = ConnectionError("postgres down")
-    state["history_error"] = ConnectionError("postgres down")
-    state["hits"] = [hit("old-1")]
+    state["hits"] = [hit(11)]
     store["search_error"] = ConnectionError("qdrant down")
-    r = rr.recommend_resolution("Weld size", RagLLM(), comment_id="self")
+    rr.vdb.search_similar_comments = lambda *a, **k: (_ for _ in ()).throw(ConnectionError("qdrant down"))
+    r = rr.recommend_resolution("Weld size", RagLLM(), comment_id=10)
     assert r["status"] == "draft_requires_human_review" and r["basis"] == "generic"
     joined = " | ".join(r["uncertainty"])
     assert "context unavailable" in joined and "historical search unavailable" in joined
@@ -356,9 +354,29 @@ def test_services_down_degrade_to_an_explicit_uncertain_draft(rec):
 
 def test_llm_down_gives_draft_unavailable_not_a_fake_draft(rec):
     rr, _, _ = rec
-    r = rr.recommend_resolution("Weld size", RagLLM(draft=RuntimeError("429"), subqueries=()), project_id="p")
+    r = rr.recommend_resolution("Weld size", RagLLM(draft=RuntimeError("429"), subqueries=()), praj_project_number="p")
     assert r["status"] == "draft_unavailable" and r["confidence_percent"] is None
     assert r["requires_human_approval"] is True
+
+
+def test_suggest_resolution_stores_only_the_ai_draft(rec):
+    rr, state, _ = rec
+    state["context"] = {"id": 10, "document_id": 5, "praj_project_number": "P1",
+                        "actual_extracted_comment": "Weld size not per AWS D1.1"}
+    state["hits"] = [hit(11, resolution="Weld resized.")]
+    r = rr.suggest_resolution(10, RagLLM())
+    assert r["saved"] is True
+    assert state["saved"] == [(10, "Resize the weld per Clause 2.4.\n\nReferenced standards: AWS D1.1 Clause 2.4", 75)]
+
+
+def test_suggest_resolution_does_not_overwrite_with_a_failed_draft(rec):
+    rr, state, _ = rec
+    state["context"] = {"id": 10, "document_id": 5, "praj_project_number": "P1", "actual_extracted_comment": "x"}
+    r = rr.suggest_resolution(10, RagLLM(draft=RuntimeError("429"), subqueries=()))
+    assert r["saved"] is False and state["saved"] == []
+    state["context"] = None
+    with pytest.raises(LookupError):
+        rr.suggest_resolution(99, RagLLM())
 
 
 # ================================================================ embedder
@@ -409,43 +427,72 @@ def _vec(*xs):
     return v
 
 
-def test_real_qdrant_excludes_self_same_revision_and_other_projects():
+def _payload(doc, project="P1", status="open", category="technical", resolution=None, text="weld"):
+    p = {"comment_id": f"UID-{doc}", "document_id": doc, "praj_project_number": project,
+         "praj_document_number": "DWG1", "praj_revision_number": "RA", "comment_category": category,
+         "is_client_comment": True, "status": status, "text": text}
+    if resolution:
+        p["resolution_text"] = resolution
+    return p
+
+
+def test_real_qdrant_integer_ids_filters_and_exclusions():
     vdb = _real_qdrant_module()
-    ids = {k: str(uuid.uuid4()) for k in ("self", "same_rev", "other_rev", "other_proj")}
-    vdb.upsert_comment_embeddings_bulk([
-        {"comment_id": ids["self"], "vector": _vec(1, 0), "text": "weld", "project_id": "P1", "revision_id": "R-new"},
-        {"comment_id": ids["same_rev"], "vector": _vec(1, 0.05), "text": "weld", "project_id": "P1", "revision_id": "R-new"},
-        {"comment_id": ids["other_rev"], "vector": _vec(1, 0.1), "text": "weld", "project_id": "P1", "revision_id": "R-old",
-         "document_id": "D1", "comment_uid": "PRJ-DWG1-RA-001-001-001-AAAAAAAAAAAA"},
-        {"comment_id": ids["other_proj"], "vector": _vec(1, 0.02), "text": "weld", "project_id": "P2", "revision_id": "R-x"},
+    vdb.upsert_comment_points([
+        {"id": 1, "vector": _vec(1, 0), "payload": _payload(doc=5)},                                   # self
+        {"id": 2, "vector": _vec(1, 0.05), "payload": _payload(doc=5, status="closed", resolution="r2")},  # same doc
+        {"id": 3, "vector": _vec(1, 0.1), "payload": _payload(doc=7, status="closed", resolution="r3")},
+        {"id": 4, "vector": _vec(1, 0.02), "payload": _payload(doc=9, project="P2", status="closed", resolution="r4")},
+        {"id": 5, "vector": _vec(1, 0.03), "payload": _payload(doc=7)},                                 # not resolved
+        {"id": 6, "vector": _vec(1, 0.04), "payload": _payload(doc=7, category="aesthetic", status="closed",
+                                                                 resolution="r6")},
     ])
-    hits = vdb.search_similar_comments(_vec(1, 0), top_k=5, project_id="P1", score_threshold=0.0,
-                                       exclude_ids=[ids["self"]], exclude_revision_id="R-new")
-    assert [h["comment_id"] for h in hits] == [ids["other_rev"]]
-    assert hits[0]["comment_uid"].startswith("PRJ-DWG1") and hits[0]["revision_id"] == "R-old"
-    unscoped = vdb.search_similar_comments(_vec(1, 0), top_k=5, score_threshold=0.0)
-    assert len(unscoped) == 4                                  # no filter -> nothing hidden
+    hits = vdb.search_similar_comments(_vec(1, 0), top_k=5, score_threshold=0.0, praj_project_number="P1",
+                                       only_resolved=True, exclude_ids=[1], exclude_document_id=5)
+    assert [h["id"] for h in hits] == [6, 3]
+    assert hits[1]["resolution_text"] == "r3" and hits[1]["document_id"] == 7 and hits[1]["comment_id"] == "UID-7"
+    tech = vdb.search_similar_comments(_vec(1, 0), top_k=5, score_threshold=0.0, praj_project_number="P1",
+                                       comment_category="technical", only_resolved=True, exclude_ids=[1],
+                                       exclude_document_id=5)
+    assert [h["id"] for h in tech] == [3]
+    assert len(vdb.search_similar_comments(_vec(1, 0), top_k=10, score_threshold=0.0)) == 6   # no filter
+    with pytest.raises(ValueError):
+        vdb.upsert_comment_points([{"id": "not-a-number", "vector": _vec(1), "payload": {}}])
+    with pytest.raises(ValueError):
+        vdb.upsert_comment_points([{"id": 0, "vector": _vec(1), "payload": {}}])
+
+
+def test_real_qdrant_payload_update_on_resolve_and_reopen():
+    vdb = _real_qdrant_module()
+    vdb.upsert_comment_points([{"id": 3, "vector": _vec(1, 0), "payload": _payload(doc=7)}])
+    vdb.update_comment_payload(3, {"status": "closed", "resolution_text": "Weld resized."})
+    assert [h["id"] for h in vdb.search_similar_comments(_vec(1, 0), score_threshold=0.0, only_resolved=True)] == [3]
+    vdb.update_comment_payload(3, {"status": "open"}, remove_keys=["resolution_text"])
+    assert vdb.search_similar_comments(_vec(1, 0), score_threshold=0.0, only_resolved=True) == []
+    point = vdb.get_client().retrieve(vdb.COMMENTS_COLLECTION, ids=[3])[0]
+    assert "resolution_text" not in point.payload and point.payload["status"] == "open"
 
 
 def test_real_qdrant_reseeded_standards_collapse_to_one_piece_of_evidence(monkeypatch):
     vdb = _real_qdrant_module()
     from agentic_rag import compliance_check as cc
     text = "Fillet weld size shall be based on the thinner part."
-    items = [{"chunk_id": str(uuid.uuid4()), "vector": _vec(1, 0, 0.01 * i), "text": text,
-              "code_reference": "AWS D1.1", "section_reference": "Clause 2.4",
-              "title": "AWS D1.1 (illustrative excerpt)", "corpus_status": "illustrative_placeholder"}
-             for i in range(2)]                                # the same clause seeded twice
-    items.append({"chunk_id": str(uuid.uuid4()), "vector": _vec(1, 0.2), "text": "All welds shall be inspected.",
-                  "code_reference": "AWS D1.1", "section_reference": "Clause 7.2.1",
-                  "title": "AWS D1.1 (illustrative excerpt)", "corpus_status": "illustrative_placeholder"})
-    vdb.upsert_standards_chunk_embeddings_bulk(items)
+
+    def item(pid, vec, txt, sec):
+        return {"id": pid, "vector": vec, "payload": {"chunk_text": txt, "code_reference": "AWS D1.1",
+                "section_reference": sec, "page_number": None, "title": "AWS D1.1 (illustrative excerpt)",
+                "corpus_status": "illustrative_placeholder"}}
+    vdb.upsert_standards_points([item(101, _vec(1, 0, 0), text, "Clause 2.4"),          # the same clause twice
+                                 item(102, _vec(1, 0, 0.01), text, "Clause 2.4"),
+                                 item(103, _vec(1, 0.2), "All welds shall be inspected.", "Clause 7.2.1")])
     monkeypatch.setattr(cc, "vdb", vdb)
     monkeypatch.setattr(cc.embedder, "embed_text", lambda t: _vec(1, 0), raising=False)
-    monkeypatch.setattr(cc.db, "log_rag_trace", lambda **kw: None, raising=False)
-    r = cc.check_compliance("Weld size not per AWS D1.1", RagLLM())
+    r = cc.check_compliance("Weld size not per AWS D1.1", RagLLM(), comment_id=10)
     assert len(r["retrieved_chunk_ids"]) == 2                  # 3 points, 2 distinct clauses
+    assert all(isinstance(i, int) for i in r["retrieved_chunk_ids"])
     assert len(r["evidence"][0]["duplicate_chunk_ids"]) == 1
     assert r["corpus_status"] == "illustrative_placeholder" and r["verified"] is True
+    assert r["trace"]["comment_id"] == 10 and r["trace"]["hops"][0]["chunk_ids"]
 
 
 # ================================================================ OCR smoke script safety

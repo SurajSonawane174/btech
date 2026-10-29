@@ -18,9 +18,9 @@ Stand-ins, chosen with flags and printed in the output:
 The standards are the repo's ILLUSTRATIVE placeholders, never real code text.
 
 Database: --dsn must point at a server where the user may CREATE DATABASE (e.g. the
-docker-compose Postgres). The demo creates its own database `cems_demo` and never touches `cems`.
-If `cems_demo` already exists it refuses to run unless --recreate-demo-db is given (that flag
-drops and recreates `cems_demo` only).
+docker-compose Postgres). The demo creates its own database `cems_demo` (final 3-table schema) and
+never touches `cems`; an existing `cems_demo` is only replaced with --recreate-demo-db.
+--qdrant server uses only the collections cems_demo_comments / cems_demo_standards_chunks.
 
     python scripts/demo_pipeline.py --dsn postgresql://cems:cems_dev_password@localhost:5432/postgres
 """
@@ -138,6 +138,7 @@ def run_extractor(workdir: Path):
 
 
 DEMO_COLLECTIONS = ("cems_demo_comments", "cems_demo_standards_chunks")
+DEMO_PROJECT, DEMO_SUPPLIER, DEMO_PO = "PRJ", "Demo Supplier (synthetic)", "PO-DEMO-001"
 
 
 class DemoDatabaseExists(RuntimeError):
@@ -168,10 +169,18 @@ def create_database(dsn: str, name: str, recreate: bool = False):
     return conn, u
 
 
+def _comments_of(conn, drawing: str):
+    cur = conn.cursor()
+    cur.execute("""SELECT c.id, c.comment_id, c.actual_extracted_comment FROM comments c
+                   JOIN documents d ON d.id = c.document_id
+                   WHERE d.praj_document_number = %s ORDER BY c.id""", (drawing,))
+    return cur.fetchall()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dsn", default=os.getenv("CEMS_TEST_DATABASE_URL"),
-                    help="admin DSN of a Postgres server (database 'cems_demo' is (re)created)")
+                    help="admin DSN of a Postgres server (database 'cems_demo' is created)")
     ap.add_argument("--workdir", default="demo_run")
     ap.add_argument("--llm", choices=["mock", "openrouter"], default="mock")
     ap.add_argument("--embedder", choices=["hash", "ollama"], default="hash")
@@ -198,10 +207,10 @@ def main(argv=None):
     # 2. extraction + classification (real CLI, offline config)
     master = run_extractor(workdir)
 
-    # 3. services
+    # 3. services: own database, own (or in-memory) collections
     from database import db
     from vectordb import qdrant_client as vdb
-    from vectordb import embedder
+    from vectordb import embedder, comment_sync
     conn, u = create_database(args.dsn, "cems_demo", recreate=args.recreate_demo_db)
     if db._pool is not None:
         db._pool.closeall()
@@ -224,53 +233,46 @@ def main(argv=None):
         import comment_extractor as ce
         llm = ce.LLMClient(ce.Config.from_yaml(ROOT / "config.yaml"))
 
-    # 4. ingest (real ingest.py logic)
+    # 4. ingest (real loader) + embedding sync
     import ingest
-    totals = ingest.ingest_dataframe(ingest.read_extractor_csv(master), str(master))
+    totals = ingest.ingest_dataframe(ingest.read_extractor_csv(master), str(master),
+                                     DEMO_PROJECT, DEMO_SUPPLIER, DEMO_PO)
     print(f"\nIngest: inserted={totals['comments']} embedded={totals['embedded']} "
           f"skipped={len(totals['skipped'])} conflicts={len(totals['conflicts'])}")
 
-    # 5. illustrative standards (same content/flags as standards_corpus/seed_standards.py)
+    # 5. illustrative standards -> Qdrant only
     from standards_corpus import seed_standards as seed
-    for std in seed.PLACEHOLDER_STANDARDS:
-        doc_id = db.get_or_create_standards_document(std["title"], std["code_reference"], std["discipline"])
-        db.insert_standards_chunks_bulk(doc_id, [{"chunk_index": i, "chunk_text": c["chunk_text"],
-                                                  "section_reference": c["section_reference"]}
-                                                 for i, c in enumerate(std["chunks"])])
-    items = [{"chunk_id": c["id"], "vector": embedder.embed_text(c["chunk_text"]), "text": c["chunk_text"],
-              "code_reference": c["code_reference"], "section_reference": c["section_reference"],
-              "title": c["title"], "corpus_status": seed.CORPUS_STATUS}
-             for c in db.get_unembedded_standards_chunks(limit=500)]
-    vdb.upsert_standards_chunk_embeddings_bulk(items)
-    db.mark_standards_chunks_embedded([i["chunk_id"] for i in items])
+    seeded = seed.seed()
 
-    # 6. synthetic HUMAN resolutions for the historical drawing
-    cur = conn.cursor()
-    cur.execute("""SELECT c.id::text, c.actual_extracted_comment FROM comments c
-                   JOIN revisions r ON r.id = c.revision_id JOIN documents d ON d.id = r.document_id
-                   WHERE d.drawing_number = 'DWG100' ORDER BY c.sr_no""")
-    for (cid, _), text in zip(cur.fetchall(), HISTORICAL_RESOLUTIONS):
-        db.insert_resolution(cid, text, resolved_by="demo-engineer (synthetic)", source="manual")
+    # 6. synthetic HUMAN resolutions for the historical drawing (status 'closed', payload updated)
+    for (cid, _uid, _text), text in zip(_comments_of(conn, "DWG100"), HISTORICAL_RESOLUTIONS):
+        comment_sync.resolve_comment(cid, text)
 
-    # 7. draft recommendations for every comment of the new drawing
-    from recommender.resolution_recommender import recommend_resolution
-    cur.execute("""SELECT c.id::text, c.comment_uid, c.actual_extracted_comment FROM comments c
-                   JOIN revisions r ON r.id = c.revision_id JOIN documents d ON d.id = r.document_id
-                   WHERE d.drawing_number = 'DWG200' ORDER BY c.sr_no""")
-    report = {"generated": time.strftime("%Y-%m-%d %H:%M:%S"), "stand_ins": banner, "ingest": totals, "comments": []}
-    for cid, uid, text in cur.fetchall():
-        r = recommend_resolution(text, llm, comment_id=cid,
-                                 min_similarity=LEXICAL_MIN_SIMILARITY if args.embedder == "hash" else 0.55)
-        report["comments"].append({"comment_uid": uid, "comment": text, **{k: r[k] for k in (
-            "status", "requires_human_approval", "auto_applied", "draft_resolution", "basis", "model_claimed_basis",
-            "confidence_percent", "confidence_rationale", "uncertainty", "corpus_status")},
-            "historical_examples": [{"text": s["text"], "resolution": s["resolution_text"], "score": round(s["score"], 3),
-                                     "comment_uid": s["comment_uid"]} for s in r["similar_comments"]],
+    # 7. AI drafts for every comment of the new drawing (stored as ai_suggested_resolution only)
+    from recommender.resolution_recommender import suggest_resolution
+    report = {"generated": time.strftime("%Y-%m-%d %H:%M:%S"), "stand_ins": banner, "ingest": totals,
+              "standards": seeded, "comments": []}
+    min_sim = LEXICAL_MIN_SIMILARITY if args.embedder == "hash" else 0.55
+    for cid, uid, text in _comments_of(conn, "DWG200"):
+        r = suggest_resolution(cid, llm, min_similarity=min_sim)
+        stored = db.get_comment_context(cid)
+        report["comments"].append({
+            "id": cid, "comment_id": uid, "comment": text,
+            **{k: r[k] for k in ("status", "requires_human_approval", "auto_applied", "draft_resolution",
+                                 "basis", "model_claimed_basis", "confidence_percent", "confidence_rationale",
+                                 "uncertainty", "corpus_status", "citations", "faithfulness_failed", "saved")},
+            "historical_examples": [{"text": s["text"], "resolution": s["resolution_text"],
+                                     "score": round(s["score"], 3), "comment_id": s["comment_id"]}
+                                    for s in r["similar_comments"]],
             "standards_evidence_status": r["standards_grounding"]["evidence_status"] if r["standards_grounding"] else None,
-            "standards_evidence": [f"{e['code_reference']} {e['section_reference']}" for e in r["standards_evidence"]]})
+            "standards_evidence": [f"{e['code_reference']} {e['section_reference']}" for e in r["standards_evidence"]],
+            "stored_ai_suggested_resolution": stored["ai_suggested_resolution"],
+            "stored_ai_confidence_percent": stored["ai_confidence_percent"],
+            "stored_status": stored["status"], "stored_resolution_text": stored["resolution_text"],
+            "trace": r["trace"]})
         print(f"\n--- {uid}\nComment : {text}\nStatus  : {r['status']} (human approval required, auto_applied=False)"
               f"\nDraft   : {r['draft_resolution']}\nBasis   : {r['basis']} (model claimed: {r['model_claimed_basis']})"
-              f"\nHistory : {[s['comment_uid'] for s in r['similar_comments']] or 'none'}"
+              f"\nHistory : {[s['comment_id'] for s in r['similar_comments']] or 'none'}"
               f"\nStandards: {report['comments'][-1]['standards_evidence_status']} {report['comments'][-1]['standards_evidence']}"
               f" [corpus: {r['corpus_status']}]\nConfidence: {r['confidence_percent']} ({r['confidence_rationale']})"
               f"\nUncertainty: {r['uncertainty'] or 'none'}")

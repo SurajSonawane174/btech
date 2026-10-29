@@ -43,8 +43,7 @@ sys.path.insert(0, str(ROOT))
 
 PASS, FAIL, SKIPPED, NOT_CONFIGURED = "PASS", "FAIL", "SKIPPED", "NOT_CONFIGURED"
 TEMP_PREFIX = "cems_smoke_"
-CEMS_TABLES = ("projects", "documents", "revisions", "comments", "resolutions", "standards_chunks",
-               "rag_query_traces")
+CEMS_TABLES = ("documents", "users", "comments")        # the final schema (database/schema.sql)
 
 
 def result(status: str, detail: str, **extra) -> Dict:
@@ -135,9 +134,11 @@ def check_postgres_temp_db(enabled: bool, dsn: Optional[str] = None) -> Dict:
             conn.autocommit = True
             cur = conn.cursor()
             cur.execute((ROOT / "database/schema.sql").read_text(encoding="utf-8"))
-            cur.execute("INSERT INTO projects (project_code, project_name) VALUES ('SMOKE', 'smoke test') RETURNING id::text")
-            pid = cur.fetchone()[0]
-            cur.execute("SELECT project_code FROM projects WHERE id = %s", (pid,))
+            cur.execute("INSERT INTO documents (praj_project_number, praj_document_number, praj_revision_number, "
+                        "supplier_name, supplier_po_number) VALUES ('SMOKE', 'SMOKE-DWG', 'NA', 'smoke', 'PO-SMOKE') "
+                        "RETURNING id")
+            did = cur.fetchone()[0]
+            cur.execute("SELECT praj_project_number FROM documents WHERE id = %s", (did,))
             ok = cur.fetchone()[0] == "SMOKE"
         finally:
             conn.close()

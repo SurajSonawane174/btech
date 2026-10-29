@@ -199,6 +199,6 @@ def test_postgres_check_reads_schema_of_configured_database(pg, monkeypatch):
         monkeypatch.setenv(k, v)
     r = S.check_postgres()
     assert r["status"] == S.PASS, r
-    conn.cursor().execute("DROP TABLE rag_query_traces")
+    conn.cursor().execute("DROP TABLE users CASCADE")
     r = S.check_postgres()
-    assert r["status"] == S.FAIL and "rag_query_traces" in r["detail"]
+    assert r["status"] == S.FAIL and "users" in r["detail"]
