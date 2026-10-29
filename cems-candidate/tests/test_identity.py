@@ -155,13 +155,12 @@ SHA = "0123456789abcdef" * 4          # a 64-hex digest for direct make_uid call
 
 
 def _parse_uid_from_ingest():
-    """ingest.parse_uid without importing ingest.py (that would need psycopg2/qdrant/ollama)."""
-    import ast
-    src = (ROOT / "ingest.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.parse(src).body if getattr(n, "name", "") == "parse_uid")
-    ns = {}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "ingest.py", "exec"), ns)
-    return ns["parse_uid"]
+    """ingest.py no longer parses comment_id (the project comes from --project); the ID format is
+    still PROJECT-DRAWING-REV-page-row-seq-HASH12, so the first two segments are checked here."""
+    def parse_uid(uid):
+        parts = str(uid).split("-")
+        return (parts[0], parts[1]) if len(parts) >= 4 else (parts[0] if parts else "UNKNOWN", "UNKNOWN")
+    return parse_uid
 
 
 def test_normal_metadata_is_not_shortened(cfg):

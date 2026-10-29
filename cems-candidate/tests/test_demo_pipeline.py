@@ -1,6 +1,6 @@
 """
-Runs scripts/demo_pipeline.py end to end: real extractor CLI, real ingest, real PostgreSQL,
-real Qdrant (in-memory), mock LLM + lexical hash embeddings (stand-ins, labelled in the output).
+Runs scripts/demo_pipeline.py end to end on the FINAL schema: real extractor CLI, real loader, real
+PostgreSQL, real Qdrant (in-memory), mock LLM + lexical hash embeddings (stand-ins, labelled).
 Skipped unless CEMS_TEST_DATABASE_URL is set and qdrant-client is installed.
 """
 import os
@@ -23,16 +23,22 @@ def test_demo_produces_reviewable_drafts_with_honest_evidence(tmp_path, monkeypa
     import demo_pipeline
     report = demo_pipeline.main(["--dsn", DSN, "--workdir", str(tmp_path / "demo"), "--recreate-demo-db"])
     assert report["ingest"]["comments"] == 6 and not report["ingest"]["conflicts"]
+    assert report["standards"]["upserted"] == 7
     by_text = {c["comment"]: c for c in report["comments"]}
     assert len(by_text) == 3
     for c in report["comments"]:
         assert c["status"] == "draft_requires_human_review"
         assert c["requires_human_approval"] is True and c["auto_applied"] is False
-        assert all("DWG200" not in h["comment_uid"] for h in c["historical_examples"])   # never itself/own drawing
+        assert c["stored_status"] == "open" and c["stored_resolution_text"] is None    # a draft resolves nothing
+        assert c["saved"] is True and c["stored_ai_suggested_resolution"]
+        assert all("DWG200" not in h["comment_id"] for h in c["historical_examples"])   # never itself/own drawing
     weld = next(c for t, c in by_text.items() if t.startswith("Fillet weld"))
     assert weld["basis"] == "both" and weld["standards_evidence_status"] == "verified"
     assert weld["standards_evidence"] == ["AWS D1.1 Clause 2.4"]
     assert weld["corpus_status"] == "illustrative_placeholder"
+    assert weld["stored_ai_suggested_resolution"].endswith("Referenced standards: AWS D1.1 Clause 2.4")
+    assert float(weld["stored_ai_confidence_percent"]) == 75
+    assert weld["trace"]["cited_chunk_ids"] and weld["trace"]["subqueries"]
     assert any("not authoritative" in u for u in weld["uncertainty"])
     insulation = next(c for t, c in by_text.items() if t.startswith("Add insulation"))
     assert insulation["basis"] == "generic" and insulation["historical_examples"] == []
@@ -40,7 +46,6 @@ def test_demo_produces_reviewable_drafts_with_honest_evidence(tmp_path, monkeypa
 
 
 def test_demo_refuses_to_drop_an_existing_demo_db_or_cems():
-    import psycopg2
     import demo_pipeline
     conn, _ = demo_pipeline.create_database(DSN, "cems_demo", recreate=True)
     conn.close()

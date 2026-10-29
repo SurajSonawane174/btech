@@ -122,7 +122,7 @@ def test_failed_run_writes_failing_report_from_any_cwd(tmp_path, monkeypatch):
     text = _pdf_text(out)
     assert "NOT ALL LIVE CHECKS PASSED" in text and "ALL LIVE CHECKS PASSED" not in text.replace("NOT ALL", "")
     assert "verified tonight" not in text and "per-project roles" not in text
-    assert "RBAC: not part of the standalone AI engine" in text.replace("\n", " ") or "not part of the standalone" in text
+    assert "the AI engine enforces no roles" in text.replace("\n", " ")
     import json
     j = json.loads(out.with_suffix(".json").read_text())
     assert j["verdict"]["all_passed"] is False
@@ -179,7 +179,7 @@ def test_infrastructure_check_on_real_demo_database(tmp_path, monkeypatch):
         ctx = rep.apply_target("demo")
         data = rep.check_infrastructure(ctx)
         assert data["postgres_comments"] == 6 and data["qdrant_comments_points"] == 6
-        assert data["postgres_resolutions_human"] == 3
+        assert data["postgres_closed"] == 3 and data["postgres_documents"] == 2 and data["postgres_projects"] == 1
         assert rep.gate_infrastructure(ok(data))["status"] == rep.PASS
     finally:
         db._pool.closeall()

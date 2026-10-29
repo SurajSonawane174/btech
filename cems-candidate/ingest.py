@@ -1,61 +1,75 @@
 """
-ingest.py
+ingest.py -- load comment_extractor.py output into PostgreSQL (final schema), then sync the
+new comments to Qdrant.
 
-Bridges comment_extractor.py's output (final_output.csv per PDF, or master_comments.csv
-across all PDFs) into Postgres + Qdrant.
+    python ingest.py --input output/master_comments.csv --project P-1001 \
+                     --supplier "ACME Fabricators" --po PO-4512 [--allow-unresolved] [--no-embed]
 
-comment_extractor.py writes, per PDF: output/<pdf_stem>/final_output.csv
-and, across all PDFs in one run: output/master_comments.csv
+--project / --supplier / --po are REQUIRED: the extractor does not produce them; the backend
+passes them from the upload form. They are never defaulted.
 
-Usage:
-    python ingest.py --input output/<pdf_stem>/final_output.csv
-    python ingest.py --input output/master_comments.csv
-    python ingest.py --input output/master_comments.csv --allow-unresolved
-
-Identity rules (see docs/HANDOFF.md, known issue 6.1):
-  * one SOURCE FILE (source_file_sha256) is one ingest group; rows of different files are
-    never merged because their text, drawing number or ids happen to match;
-  * the document/revision a file lands under comes from the extractor's metadata columns
-    (praj_document_number, praj_revision_number + their *_source provenance);
-  * a file whose drawing number or revision is unresolved is SKIPPED unless
-    --allow-unresolved is given; then it gets its own placeholder identity
-    (UNRESOLVED-<sha12> / NA-<sha8>) instead of being lumped together with other files;
-  * if a revision already holds comments from a DIFFERENT source file, the new file is
-    reported as a conflict and not inserted (no silent merge);
-  * re-ingesting the same file inserts nothing new (ON CONFLICT DO NOTHING), and counts
-    come from SELECTs, not cursor.rowcount;
-  * literal "NA" text is kept as text: only empty cells are treated as missing.
+Rules
+  * One SOURCE FILE (source_file_sha256) is one ingest group; different files are never merged.
+  * A document revision is one `documents` row, upserted on unique_doc_revision
+    (project, document number, revision, supplier, PO). A missing revision is stored as 'NA'.
+  * A file whose drawing number is unresolved is SKIPPED unless --allow-unresolved; then it gets
+    the placeholder document number UNRESOLVED-<sha12>, never a guessed one.
+  * Comments are inserted with ON CONFLICT (comment_id) DO NOTHING: re-ingesting a file adds 0 rows.
+  * CONFLICTS (reported, nothing inserted for that file):
+      - the same PDF was already ingested under a different document row (e.g. another supplier
+        or PO): its comment_ids already exist elsewhere and comment_id is globally unique;
+      - the target revision already holds comments from a DIFFERENT source file.
+  * Extractor fields are mapped through an explicit allowlist (COMMENT_FIELD_MAP); every other
+    column (sr_no, email, annotation_type, comment_source, ...) is dropped, never an error.
+  * date_of_comment + time_of_comment -> comment_datetime. Accepted dates: DD/MM/YYYY and
+    YYYY-MM-DD only; times HH:MM or HH:MM:SS. Anything else, or a date without a time, is
+    stored as NULL (an ambiguous OCR date such as 12-09-2026 is not guessed).
+  * Literal "NA" text is kept as text; only empty cells are missing.
 """
 import re
 import sys
 import logging
 import argparse
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from database import db
-from vectordb import qdrant_client as vdb
-from vectordb import embedder
+from vectordb import comment_sync
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 _HEX12 = re.compile(r"^[0-9A-F]{12}$")
+_DMY = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
+_YMD = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_TIME = re.compile(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$")
 
-
-def parse_uid(uid: str):
-    """comment_id format: PROJECT-DRAWING-...-page-row-seq (project/drawing sanitized, no dashes)."""
-    parts = str(uid).split("-")
-    if len(parts) < 4:
-        return parts[0] if parts else "UNKNOWN", "UNKNOWN"
-    return parts[0], parts[1]
+# extractor column -> comments column (allowlist). comment_datetime is derived separately.
+COMMENT_FIELD_MAP = {
+    "comment_id": "comment_id",
+    "page_sheet": "page_sheet",
+    "actual_extracted_comment": "actual_extracted_comment",
+    "snapshot_file": "snapshot_file",
+    "name_of_person_commented": "name_of_person_commented",
+    "comment_color": "comment_color",
+    "is_client_comment": "is_client_comment",
+    "comment_category": "comment_category",
+    "is_handwritten": "is_handwritten",
+    "extraction_confidence_percent": "extraction_confidence_percent",
+}
+DATETIME_SOURCE_FIELDS = ("date_of_comment", "time_of_comment")
+DOCUMENT_SOURCE_FIELDS = ("praj_document_number", "praj_revision_number", "customer_document_number",
+                          "customer_revision", "drawing_number_source", "revision_source",
+                          "source_file_sha256", "source_file", "source_path")
 
 
 def uid_source_suffix(uid: str) -> Optional[str]:
-    """The 12-hex source-file suffix of a current-format id, or None for legacy ids."""
+    """The 12-hex source-file suffix of a current-format comment_id, or None for legacy ids."""
     parts = str(uid).split("-")
     if len(parts) == 7 and _HEX12.match(parts[-1]):
         return parts[-1]
@@ -63,10 +77,73 @@ def uid_source_suffix(uid: str) -> Optional[str]:
 
 
 def read_extractor_csv(path) -> pd.DataFrame:
-    """Read extractor output as TEXT. pandas' default turns the literal string 'NA' (used by the
-    extractor for an unknown revision / customer number, and possibly real comment text) into
-    NaN; here only truly empty cells become missing."""
+    """Read extractor output as TEXT; only truly empty cells become missing ('NA' stays 'NA')."""
     return pd.read_csv(path, dtype=str, keep_default_na=False, na_values=[""])
+
+
+def _clean(v) -> Optional[str]:
+    if v is None or (isinstance(v, float) and v != v):
+        return None
+    v = str(v).strip()
+    return v or None
+
+
+def parse_comment_datetime(date_value, time_value) -> Optional[datetime]:
+    """Exact formats only; None for anything missing, malformed or ambiguous."""
+    d, t = _clean(date_value), _clean(time_value)
+    if not d or not t or d.upper() == "NA" or t.upper() == "NA":
+        return None
+    m = _DMY.match(d)
+    if m:
+        day, month, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = _YMD.match(d)
+        if not m:
+            return None
+        year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    tm = _TIME.match(t)
+    if not tm:
+        return None
+    try:
+        return datetime(year, month, day, int(tm.group(1)), int(tm.group(2)), int(tm.group(3) or 0))
+    except ValueError:
+        return None
+
+
+def _yes(v) -> bool:
+    return (_clean(v) or "").upper() == "Y"
+
+
+def _numeric(v) -> Optional[Decimal]:
+    v = _clean(v)
+    if v is None:
+        return None
+    try:
+        return Decimal(v)
+    except InvalidOperation:
+        return None
+
+
+def map_comment_row(r: Dict) -> Dict:
+    """One extractor row -> a dict keyed by db.COMMENT_INSERT_COLUMNS (allowlist only)."""
+    return {
+        "comment_id": _clean(r.get("comment_id")),
+        "page_sheet": _clean(r.get("page_sheet")),
+        "actual_extracted_comment": _clean(r.get("actual_extracted_comment")),
+        "snapshot_file": _clean(r.get("snapshot_file")),
+        "name_of_person_commented": _clean(r.get("name_of_person_commented")),
+        "comment_datetime": parse_comment_datetime(r.get("date_of_comment"), r.get("time_of_comment")),
+        "comment_color": _clean(r.get("comment_color")),
+        "is_client_comment": _yes(r.get("is_client_comment")),
+        "comment_category": _clean(r.get("comment_category")),
+        "is_handwritten": _yes(r.get("is_handwritten")),
+        "extraction_confidence_percent": _numeric(r.get("extraction_confidence_percent")),
+    }
+
+
+def dropped_columns(df: pd.DataFrame) -> List[str]:
+    known = set(COMMENT_FIELD_MAP) | set(DATETIME_SOURCE_FIELDS) | set(DOCUMENT_SOURCE_FIELDS)
+    return sorted(c for c in df.columns if c not in known)
 
 
 def _first(group: pd.DataFrame, col: str) -> Optional[str]:
@@ -76,147 +153,135 @@ def _first(group: pd.DataFrame, col: str) -> Optional[str]:
     return vals[0] if vals else None
 
 
-def _resolve_identity(group: pd.DataFrame, sha: Optional[str], allow_unresolved: bool):
-    """-> (project, drawing, revision, problem). problem is None when the group may be ingested."""
+def _resolve_identity(group: pd.DataFrame, sha: Optional[str],
+                      allow_unresolved: bool) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """-> (document number, revision, problem). problem is None when the group may be ingested."""
     if "praj_revision_number" in group and group["praj_revision_number"].fillna("").nunique() > 1:
-        return None, None, None, "rows of one source file disagree on the revision"
-    project = parse_uid(group["comment_id"].iloc[0])[0]
+        return None, None, "rows of one source file disagree on the revision"
     drawing = _first(group, "praj_document_number")
-    revision = _first(group, "praj_revision_number")
-    has_provenance = "drawing_number_source" in group and "revision_source" in group
+    revision = _first(group, "praj_revision_number") or db.MISSING_REVISION
+    if "revision_source" in group and _first(group, "revision_source") == "unresolved":
+        revision = db.MISSING_REVISION
     drawing_unresolved = (not drawing or drawing == "UNKNOWN"
-                          or (has_provenance and _first(group, "drawing_number_source") == "unresolved"))
-    revision_unresolved = (not revision or revision == "NA"
-                           or (has_provenance and _first(group, "revision_source") == "unresolved"))
-    if drawing_unresolved or revision_unresolved:
+                          or ("drawing_number_source" in group and _first(group, "drawing_number_source") == "unresolved"))
+    if drawing_unresolved:
         if not allow_unresolved:
-            what = " and ".join(w for w, bad in (("drawing number", drawing_unresolved),
-                                                 ("revision", revision_unresolved)) if bad)
-            return project, drawing, revision, f"unresolved {what} (use --allow-unresolved to ingest)"
+            return drawing, revision, "unresolved drawing number (use --allow-unresolved to ingest)"
         if not sha:
-            return project, drawing, revision, "unresolved metadata and no source_file_sha256 to isolate it"
-        if drawing_unresolved:
-            drawing = f"UNRESOLVED-{sha[:12].upper()}"
-        if revision_unresolved:
-            revision = f"NA-{sha[:8].upper()}"
-    return project, drawing, revision, None
+            return drawing, revision, "unresolved drawing number and no source_file_sha256 to isolate it"
+        drawing = f"UNRESOLVED-{sha[:12].upper()}"
+    return drawing, revision, None
 
 
-def ingest_dataframe(df: pd.DataFrame, source_label: str, allow_unresolved: bool = False) -> dict:
-    totals = {"groups": 0, "comments": 0, "already_present": 0, "embedded": 0,
-              "embedding_failed": 0, "skipped": [], "conflicts": []}
+def ingest_dataframe(df: pd.DataFrame, source_label: str, praj_project_number: str, supplier_name: str,
+                     supplier_po_number: str, allow_unresolved: bool = False, embed: bool = True) -> dict:
+    for name, value in (("project", praj_project_number), ("supplier", supplier_name), ("po", supplier_po_number)):
+        if value is None or not str(value).strip():
+            raise ValueError(f"--{name} is required (it comes from the upload form; it is never defaulted)")
+    totals = {"groups": 0, "comments": 0, "already_present": 0, "rows_without_text": 0,
+              "datetime_not_stored": 0, "embedded": 0, "embedding_failed": 0,
+              "skipped": [], "conflicts": [], "documents": [], "dropped_columns": []}
     if df.empty:
         logger.info(f"{source_label}: no rows, skipping")
         return totals
+    totals["dropped_columns"] = dropped_columns(df)
+    if totals["dropped_columns"]:
+        logger.info(f"{source_label}: columns not stored (no DB column): {', '.join(totals['dropped_columns'])}")
 
     df = df.copy()
     if "source_file_sha256" in df and df["source_file_sha256"].notna().all():
         keys = df["source_file_sha256"]
     else:
-        # legacy output (before source hashes): best available separation, with a warning
-        logger.warning(f"{source_label}: no source_file_sha256 column; grouping by "
-                       f"{'source_file' if 'source_file' in df else 'comment_id prefix + revision'}"
-                       f" (re-extract to get exact source isolation)")
-        if "source_file" in df:
-            keys = df["source_file"].fillna("")
-        else:
-            keys = df["comment_id"].map(lambda u: "-".join(parse_uid(u))) + "|" + \
-                df.get("praj_revision_number", pd.Series([""] * len(df))).fillna("")
+        logger.warning(f"{source_label}: no source_file_sha256 column; grouping by source_file / document "
+                       f"number (re-extract to get exact source isolation)")
+        keys = df["source_file"].fillna("") if "source_file" in df else \
+            df.get("praj_document_number", pd.Series([""] * len(df))).fillna("")
 
     for key, group in df.groupby(keys, sort=True):
         totals["groups"] += 1
         sha = key if "source_file_sha256" in df and _HEX12.match(str(key)[:12].upper()) else None
         label = _first(group, "source_path") or _first(group, "source_file") or str(key)[:16]
-        project, drawing, revision, problem = _resolve_identity(group, sha, allow_unresolved)
+        drawing, revision, problem = _resolve_identity(group, sha, allow_unresolved)
         if problem:
             logger.warning(f"SKIP {label}: {problem}")
             totals["skipped"].append({"source": label, "reason": problem})
             continue
 
-        project_id = db.get_or_create_project(project_code=project)
-        document_id = db.get_or_create_document(project_id=project_id, drawing_number=drawing)
+        rows = []
+        for r in group.to_dict("records"):
+            m = map_comment_row(r)
+            if not m["comment_id"] or not m["actual_extracted_comment"]:
+                totals["rows_without_text"] += 1
+                continue
+            if m["comment_datetime"] is None and _clean(r.get("date_of_comment")) not in (None, "NA"):
+                totals["datetime_not_stored"] += 1
+            rows.append(m)
+        key_desc = f"{praj_project_number}/{drawing}/{revision}/{supplier_name}/{supplier_po_number}"
 
-        existing = db.find_revision(document_id, revision)
-        if existing and sha:
-            held = {uid_source_suffix(c["comment_uid"]) for c in db.get_comments_by_revision(existing)}
+        # Conflict 1: these comment_ids already belong to a different document row.
+        existing_doc = db.find_document(praj_project_number, drawing, revision, supplier_name, supplier_po_number)
+        owners = db.comment_id_owners([m["comment_id"] for m in rows])
+        foreign = sorted({d for d in owners.values() if d != existing_doc})
+        if foreign:
+            msg = (f"this file's comments are already stored under another document row "
+                   f"(document id {', '.join(map(str, foreign))}); comment_id is globally unique, so it "
+                   f"cannot also be stored under {key_desc}")
+            logger.error(f"CONFLICT {label}: {msg}")
+            totals["conflicts"].append({"source": label, "reason": msg})
+            continue
+        # Conflict 2: the revision already holds comments from a different source file.
+        if existing_doc is not None and sha:
+            held = {uid_source_suffix(c) for c in db.get_comment_ids_for_document(existing_doc)}
             held.discard(None)
             if held and held != {sha[:12].upper()}:
-                msg = (f"revision {project}/{drawing}/{revision} already holds comments from another "
-                       f"source file ({', '.join(sorted(held))}); not merged")
+                msg = (f"revision {key_desc} already holds comments from another source file "
+                       f"({', '.join(sorted(held))}); not merged")
                 logger.error(f"CONFLICT {label}: {msg}")
                 totals["conflicts"].append({"source": label, "reason": msg})
                 continue
 
-        revision_id = db.create_revision(
-            document_id=document_id,
-            praj_revision_number=revision,
-            customer_document_number=_first(group, "customer_document_number"),
-            customer_revision=_first(group, "customer_revision"),
-            source_pdf_path=_first(group, "source_path") or _first(group, "source_file"),
-        )
-
-        records = group.to_dict("records")
-        inserted = db.insert_comments_bulk(revision_id, records)
+        document_id = db.upsert_document(praj_project_number, drawing, revision, supplier_name, supplier_po_number,
+                                         _first(group, "customer_document_number"), _first(group, "customer_revision"))
+        inserted = db.insert_comments(document_id, rows)
         totals["comments"] += inserted
-        totals["already_present"] += len(records) - inserted
-        logger.info(f"{label} -> {project}/{drawing}/{revision}: inserted {inserted}, "
-                    f"already present {len(records) - inserted}")
+        totals["already_present"] += len(rows) - inserted
+        totals["documents"].append({"source": label, "document_id": document_id, "key": key_desc,
+                                    "inserted": inserted, "already_present": len(rows) - inserted})
+        logger.info(f"{label} -> document {document_id} ({key_desc}): inserted {inserted}, "
+                    f"already present {len(rows) - inserted}")
 
-        # Embed + push to Qdrant. Failures leave rows with embedded=false, so a rerun retries.
-        embed_items = []
-        for c in db.get_comments_by_revision(revision_id):
-            if c["embedded"]:
-                continue
-            text = c["actual_extracted_comment"]
-            try:
-                vector = embedder.embed_text(text)
-            except Exception as e:
-                logger.warning(f"Embedding skipped for {c['id']}: {e}")
-                totals["embedding_failed"] += 1
-                continue
-            embed_items.append({
-                "comment_id": c["id"], "vector": vector, "text": text,
-                "category": c["comment_category"], "project_id": project_id, "revision_id": revision_id,
-                "document_id": document_id, "comment_uid": c.get("comment_uid"),
-            })
-        if embed_items:
-            try:
-                vdb.upsert_comment_embeddings_bulk(embed_items)
-                db.mark_comments_embedded([i["comment_id"] for i in embed_items])
-                totals["embedded"] += len(embed_items)
-            except Exception as e:
-                logger.error(f"Vector upsert failed for {label} ({e}); rows stay embedded=false")
-                totals["embedding_failed"] += len(embed_items)
-
+    if embed:
+        result = comment_sync.sync_embeddings()
+        totals["embedded"], totals["embedding_failed"] = result["embedded"], result["failed"]
     return totals
 
 
-def main():
-    parser = argparse.ArgumentParser()
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", required=True, help="final_output.csv or master_comments.csv")
+    parser.add_argument("--project", required=True, help="praj_project_number (from the upload form)")
+    parser.add_argument("--supplier", required=True, help="supplier_name (from the upload form)")
+    parser.add_argument("--po", required=True, help="supplier_po_number (from the upload form)")
     parser.add_argument("--allow-unresolved", action="store_true",
-                        help="ingest files with unresolved drawing/revision under a per-file placeholder identity")
-    args = parser.parse_args()
+                        help="ingest files with an unresolved drawing number as UNRESOLVED-<sha12>")
+    parser.add_argument("--no-embed", action="store_true", help="store in Postgres only; embed later")
+    args = parser.parse_args(argv)
 
     db.init_pool()
-    vdb.ensure_collections()
-    if not embedder.check_ready():
-        logger.warning("Ollama embedding model not ready — embeddings will be skipped. "
-                        "Run: ollama pull nomic-embed-text")
-
     df = read_extractor_csv(args.input)
-    totals = ingest_dataframe(df, args.input, allow_unresolved=args.allow_unresolved)
-
+    totals = ingest_dataframe(df, args.input, args.project, args.supplier, args.po,
+                              allow_unresolved=args.allow_unresolved, embed=not args.no_embed)
     logger.info("=" * 50)
     logger.info(f"Ingestion complete | files={totals['groups']} inserted={totals['comments']} "
                 f"already_present={totals['already_present']} embedded={totals['embedded']} "
                 f"embedding_failed={totals['embedding_failed']} skipped={len(totals['skipped'])} "
-                f"conflicts={len(totals['conflicts'])}")
+                f"conflicts={len(totals['conflicts'])} datetime_not_stored={totals['datetime_not_stored']}")
     for s in totals["skipped"]:
         logger.info(f"  skipped  {s['source']}: {s['reason']}")
     for c in totals["conflicts"]:
         logger.info(f"  conflict {c['source']}: {c['reason']}")
     logger.info("=" * 50)
+    return totals
 
 
 if __name__ == "__main__":

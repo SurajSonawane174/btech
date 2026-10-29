@@ -30,11 +30,11 @@ Written when the project moved to a new account (Claude Code). Everything here c
 ## 3. Architecture
 ```
 PDF -> comment_extractor.py -> output/*.csv (+snapshots)
-        -> ingest.py -> Postgres (structured, RBAC, resolutions, traces)
+        -> ingest.py -> Postgres (documents, users, comments; final 3-table schema)
                      -> Ollama embed -> Qdrant: comments
 standards (placeholder) -> embed -> Qdrant: standards_chunks
 comment -> compliance_check (decompose -> multi-hop -> synthesize -> faithfulness) -> trace
-comment -> recommender (similar comments + resolutions + verified standards) -> draft -> human approval
+comment -> recommender (closed similar comments + verified standards) -> ai_suggested_resolution -> human approval -> resolution_text
 ```
 Not built: API, frontend, approval UI, knowledge graph population, revision diff.
 
@@ -61,8 +61,8 @@ Not built: API, frontend, approval UI, knowledge graph population, revision diff
 ## 6. Known issues
 1. **Metadata/UID collision (highest priority).** `CEMS_Engineering_Annotation_Set_N.pdf` parses to drawing=`Annotation`, revision=`Set` for all five files. `UNIQUE(revision_id, comment_uid)` + `ON CONFLICT DO NOTHING` then silently drops comments from files 2-5. Fix: group by `source_file` (the master CSV has it), validate filename parts, add the metadata cascade, put revision in the UID plus a revision-independent `position_key`.
 2. No revision lifecycle or diff yet (can't test Rev A -> Rev B until 6.1 is fixed).
-3. Knowledge graph tables exist (`entities`, `comment_entity_edges`) but nothing writes to them.
-4. No API, UI, approval workflow, or audit trail beyond `rag_query_traces`.
+3. No knowledge graph: the final schema has no entity tables.
+4. The API/UI live in the Express backend; this engine exposes `cems_cli.py`. RAG traces are returned and logged, not stored.
 5. Debt: `import fitz` deprecation (use `pymupdf`); Qdrant client/server mismatch; `embedder.check_ready()` false negative (embedding calls work); no automated test suite.
 6. Cost: compliance check = 3-4 LLM calls, recommendation = up to 4. Needs batching, caching and per-call cost logging before scale.
 7. Standards licensing: real ISO/ASME/AWS/IS text is copyrighted. Use PRAJ-provided internal procedures or licensed excerpts.
@@ -177,3 +177,33 @@ Real services exercised in this sandbox: PostgreSQL 16.15; Qdrant SERVER 1.12.4 
 server mode with a pre-existing team collection left intact, report infrastructure gate PASS on `cems_demo`).
 NOT verified: Ollama embeddings, OpenRouter LLM (no key here), LightOnOCR, real PRAJ PDFs (incl. Acrobat-made
 reply threads), real-world accuracy.
+
+## 14. Final database schema refactor (2026-10-29)
+The live database is final: exactly 3 tables (`documents`, `users`, `comments`), bigint ids, no ENUMs,
+no UUIDs. Everything that used the older 12-table draft was rewritten; earlier sections of this file
+describe that older design as history.
+- `database/schema.sql` reproduces the final schema exactly (incl. `unique_doc_revision`).
+- `database/db.py`: document upsert on `unique_doc_revision` (missing revision stored as `NA`; customer
+  `NA` -> NULL, as the team's SQL did), comments with `ON CONFLICT (comment_id)`, AI draft / resolve /
+  reopen functions. Status values `open` / `closed`. Removed: projects, memberships, RBAC `can()`,
+  revisions, entities, resolutions, standards tables, `log_rag_trace`.
+- `ingest.py`: `--project --supplier --po` required; explicit allowlist mapping (sr_no, email,
+  annotation_type, classification_method, comment_source, visual_feature, position_key ... dropped);
+  `comment_datetime` from DD/MM/YYYY or YYYY-MM-DD + time only (ambiguous or date-only -> NULL);
+  conflicts: different file for the same revision, or the same PDF under another supplier/PO.
+- Qdrant: point id = `comments.id`; payload comment_id, document_id, project/document/revision,
+  category, is_client_comment, status, text, resolution_text (closed only). Standards in Qdrant only,
+  stable integer ids. `vectordb/comment_sync.py` syncs embeddings and updates payloads on resolve/reopen.
+- RAG: no trace table; `trace` returned in the result and logged. Recommender history = closed comments
+  with `resolution_text`; `suggest_resolution` writes only `ai_suggested_resolution` (+ "Referenced
+  standards: ..." line) and `ai_confidence_percent` (None when faithfulness failed).
+- `cems_cli.py`: JSON CLI for the Express routes. `rebuild-vectors --confirm` recreates both collections
+  (old points had UUID ids) and re-embeds from Postgres.
+- Demo, system report, live smoke and evaluation moved to the final schema (report gates count
+  `documents` / `comments` / `embedded`; no trace rows are written any more).
+- The extractor still writes position_key / reply columns to the CSV; ingest drops them (reported in
+  `dropped_columns`).
+- `database/migrations/` removed (both 001 files): the live database already is the final schema.
+Verified here: 270 passed with real PostgreSQL 16 (256 passed + 14 skipped without it); demo, live smoke
+(Postgres, temp database, Qdrant) and the report's infrastructure gate against a real Qdrant 1.12.4 server.
+NOT verified: Ollama embeddings, the real LLM.

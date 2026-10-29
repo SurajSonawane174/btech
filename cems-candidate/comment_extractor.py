@@ -1315,8 +1315,8 @@ def enrich_snapshot(llm: LLMClient, shot_path: Path, comment_text: str, annot_ty
     """
     From the teammate's inspect_snapshot_vision, narrowed to what a crop can actually tell us:
       is_handwritten  - Y/N, a markup property the PDF annotation does not carry
-      visual_feature  - what is being marked (pump P-101, nozzle N3, pipe line ...): the seed
-                        for the entity graph (entities / comment_entity_edges)
+      visual_feature  - what is being marked (pump P-101, nozzle N3, pipe line ...); written to
+                        the extractor output only (the final DB schema has no column for it)
     Deliberately NOT taken from the model: category (the classifier owns it) and any
     'confidence' number (a self-reported score is not a measured accuracy).
     """

@@ -390,9 +390,9 @@ def test_colab_config_is_local_box_reader_with_full_page_ocr():
     assert c.vision_box_reader == "local_ocr" and c.ocr_enabled and c.ocr_full_page
 
 
-# ---------------------------------------------------------------- DB insert carries the new column
+# ---------------------------------------------------------------- DB insert writes only final-schema columns
 
-def test_insert_comments_bulk_writes_visual_feature(monkeypatch):
+def test_insert_comments_writes_only_final_schema_columns(monkeypatch):
     from contextlib import contextmanager
     from database import db
     captured = {}
@@ -400,7 +400,7 @@ def test_insert_comments_bulk_writes_visual_feature(monkeypatch):
     class Cur:
         rowcount = 1
         def execute(self, *a): pass
-        def fetchone(self): return {"n": 0}      # insert_comments_bulk counts rows with SELECTs
+        def fetchone(self): return {"n": 0}      # insert_comments counts rows with SELECTs
 
     @contextmanager
     def fake_cursor(commit=False):
@@ -411,9 +411,9 @@ def test_insert_comments_bulk_writes_visual_feature(monkeypatch):
 
     monkeypatch.setattr(db, "get_cursor", fake_cursor)
     monkeypatch.setattr(db.psycopg2.extras, "execute_values", fake_execute_values)
-    db.insert_comments_bulk("rev-1", [
-        {"comment_id": "A-B-001-000-001", "actual_extracted_comment": "x", "visual_feature": "pump P-101"},
-        {"comment_id": "A-B-001-000-002", "actual_extracted_comment": "y", "visual_feature": float("nan")},
-    ])
-    assert "visual_feature" in captured["sql"]
-    assert captured["rows"][0][-1] == "pump P-101" and captured["rows"][1][-1] is None
+    db.insert_comments(7, [{"comment_id": "A-B-001-000-001", "actual_extracted_comment": "x",
+                            "visual_feature": "pump P-101", "sr_no": 1}])
+    assert "ON CONFLICT (comment_id) DO NOTHING" in captured["sql"]
+    for gone in ("visual_feature", "sr_no", "comment_uid", "revision_id", "date_of_comment", "comment_source"):
+        assert gone not in captured["sql"]
+    assert captured["rows"][0][0] == 7 and len(captured["rows"][0]) == 1 + len(db.COMMENT_INSERT_COLUMNS)
