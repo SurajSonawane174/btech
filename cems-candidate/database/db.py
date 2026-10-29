@@ -16,11 +16,16 @@ documents / users / comments, bigint ids everywhere.
 import os
 import logging
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import psycopg2
 import psycopg2.extras
 from psycopg2.pool import SimpleConnectionPool
+from dotenv import load_dotenv
+
+# Load .env from project root if present
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -40,15 +45,25 @@ COMMENT_INSERT_COLUMNS = (
 
 def init_pool(minconn: int = 1, maxconn: int = 10, **kwargs) -> None:
     global _pool
-    _pool = SimpleConnectionPool(
-        minconn, maxconn,
-        host=kwargs.get("host") or os.getenv("POSTGRES_HOST", "localhost"),
-        port=kwargs.get("port") or os.getenv("POSTGRES_PORT", "5432"),
-        dbname=kwargs.get("dbname") or os.getenv("POSTGRES_DB", "cems"),
-        user=kwargs.get("user") or os.getenv("POSTGRES_USER", "cems"),
-        password=kwargs.get("password") or os.getenv("POSTGRES_PASSWORD", "cems_dev_password"),
-    )
-    logger.info("PostgreSQL connection pool initialized")
+    dsn = kwargs.get("dsn") or os.getenv("DATABASE_URL")
+    if dsn:
+        # Supabase and cloud Postgres require SSL
+        if "sslmode=" not in dsn and ("supabase.co" in dsn or "pooler" in dsn):
+            separator = "&" if "?" in dsn else "?"
+            dsn = f"{dsn}{separator}sslmode=require"
+        _pool = SimpleConnectionPool(minconn, maxconn, dsn=dsn)
+        logger.info("PostgreSQL connection pool initialized via DATABASE_URL")
+    else:
+        _pool = SimpleConnectionPool(
+            minconn, maxconn,
+            host=kwargs.get("host") or os.getenv("POSTGRES_HOST", "localhost"),
+            port=kwargs.get("port") or os.getenv("POSTGRES_PORT", "5432"),
+            dbname=kwargs.get("dbname") or os.getenv("POSTGRES_DB", "cems"),
+            user=kwargs.get("user") or os.getenv("POSTGRES_USER", "cems"),
+            password=kwargs.get("password") or os.getenv("POSTGRES_PASSWORD", "cems_dev_password"),
+            sslmode=kwargs.get("sslmode") or os.getenv("POSTGRES_SSLMODE", "prefer"),
+        )
+        logger.info("PostgreSQL connection pool initialized via host/port")
 
 
 @contextmanager

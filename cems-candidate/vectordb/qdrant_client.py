@@ -18,10 +18,15 @@ demo or test can use its own collections and never touch the team's.
 """
 import os
 import logging
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
+from dotenv import load_dotenv
+
+# Load .env from project root if present
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +42,19 @@ _client: Optional[QdrantClient] = None
 def get_client() -> QdrantClient:
     global _client
     if _client is None:
-        _client = QdrantClient(
-            host=os.getenv("QDRANT_HOST", "localhost"),
-            port=int(os.getenv("QDRANT_PORT", "6333")),
-        )
+        url = os.getenv("QDRANT_URL")
+        api_key = os.getenv("QDRANT_API_KEY")
+        if url:
+            _client = QdrantClient(url=url, api_key=api_key, timeout=60)
+            logger.info("Qdrant client initialized via QDRANT_URL (Cloud)")
+        else:
+            _client = QdrantClient(
+                host=os.getenv("QDRANT_HOST", "localhost"),
+                port=int(os.getenv("QDRANT_PORT", "6333")),
+                api_key=api_key,
+                timeout=60,
+            )
+            logger.info("Qdrant client initialized via host/port (Local)")
     return _client
 
 
